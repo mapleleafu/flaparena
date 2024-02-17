@@ -9,7 +9,6 @@ import (
 )
 
 func main() {
-    // Load .env file
     if err := godotenv.Load(); err != nil {
         log.Println("No .env file found")
     }
@@ -17,6 +16,8 @@ func main() {
     r := mux.NewRouter()
     r.HandleFunc("/api/register", handlers.Register).Methods("POST")
     r.HandleFunc("/api/login", handlers.Login).Methods("POST")
+    r.HandleFunc("/api/logout", handlers.Logout).Methods("POST")
+    r.HandleFunc("/api/refresh/token", handlers.RefreshToken).Methods("POST")
 
     log.Println("Server running on http://localhost:8000")
     http.ListenAndServe(":8000", r)
