@@ -18,6 +18,7 @@ func main() {
     r.HandleFunc("/api/login", handlers.Login).Methods("POST")
     r.HandleFunc("/api/logout", handlers.Logout).Methods("POST")
     r.HandleFunc("/api/refresh/token", handlers.RefreshToken).Methods("POST")
+    r.HandleFunc("/ws/{token}", handlers.WsHandler)
 
     log.Println("Server running on http://localhost:8000")
     http.ListenAndServe(":8000", r)

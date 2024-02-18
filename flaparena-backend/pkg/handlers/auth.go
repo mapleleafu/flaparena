@@ -3,13 +3,15 @@ package handlers
 import (
 	"database/sql"
 	"encoding/json"
+    "fmt"
 	"log"
 	"net/http"
 	"os"
 	"time"
     "crypto/rand"
     "encoding/base64"
-
+    "strconv"
+    
 	"github.com/golang-jwt/jwt/v4"
 	"github.com/mapleleafu/flaparena/flaparena-backend/pkg/config"
 	"github.com/mapleleafu/flaparena/flaparena-backend/pkg/models"
@@ -86,13 +88,17 @@ func Login(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    // Generate JWT token
-    token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-        "username": user.Username,
-        "exp":      time.Now().Add(time.Hour * 72).Unix(),
-    })
+    claims := models.CustomClaims{
+        RegisteredClaims: jwt.RegisteredClaims{
+            ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour * 72)),
+        },
+        ID:       strconv.Itoa(int(user.ID)),
+        Username: user.Username,
+    }
 
+    token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
     tokenString, err := token.SignedString([]byte(os.Getenv("JWT_SECRET")))
+    
     if err != nil {
         utils.HandleError(w, responses.InternalServerError{Msg: "Failed to generate token."})
         return
@@ -200,11 +206,15 @@ func RefreshToken(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    // Generate JWT token
-    token := jwt.NewWithClaims(jwt.SigningMethodHS256, jwt.MapClaims{
-        "username": user.Username,
-        "exp":      time.Now().Add(time.Hour * 72).Unix(),
-    })
+    claims := models.CustomClaims{
+        RegisteredClaims: jwt.RegisteredClaims{
+            ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour * 72)),
+        },
+        ID:       strconv.Itoa(int(user.ID)), // Convert ID to string
+        Username: user.Username,
+    }
+    
+    token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 
     tokenString, err := token.SignedString([]byte(os.Getenv("JWT_SECRET")))
     if err != nil {
@@ -213,4 +223,30 @@ func RefreshToken(w http.ResponseWriter, r *http.Request) {
     }
 
     utils.HandleSuccess(w, models.SuccessResponse(map[string]string{"access_token": tokenString}))
+}
+
+func ValidateToken(tokenStr string) (*models.CustomClaims, error) {
+    secretKey := os.Getenv("JWT_SECRET")
+    if secretKey == "" {
+        return nil, fmt.Errorf("JWT_SECRET not set")
+    }
+
+    claims := &models.CustomClaims{}
+    token, err := jwt.ParseWithClaims(tokenStr, claims, func(token *jwt.Token) (interface{}, error) {
+        if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
+            return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
+        }
+        log.Printf("inside auth.go validatetoken func Validating token with claims: %+v", claims)
+        return []byte(secretKey), nil
+    })
+
+    if err != nil {
+        return nil, err
+    }
+
+    if !token.Valid {
+        return nil, fmt.Errorf("invalid token")
+    }
+
+    return claims, nil
 }
