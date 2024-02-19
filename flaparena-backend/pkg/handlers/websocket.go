@@ -1,13 +1,13 @@
 package handlers
 
 import (
-	"log"
-	"net/http"
+    "log"
+    "net/http"
     "strconv"
 
-	"github.com/gorilla/mux"
-	"github.com/gorilla/websocket"
-	"github.com/mapleleafu/flaparena/flaparena-backend/pkg/responses"
+    "github.com/gorilla/mux"
+    "github.com/gorilla/websocket"
+    "github.com/mapleleafu/flaparena/flaparena-backend/pkg/responses"
     "github.com/mapleleafu/flaparena/flaparena-backend/pkg/utils"
 )
 
@@ -48,26 +48,37 @@ func WsHandler(w http.ResponseWriter, r *http.Request) {
     }
     defer conn.Close()
 
-    for {
-        messageType, message, err := conn.ReadMessage()
+    connection := &Connection{send: make(chan []byte, 256), ws: conn}
+    hub.register <- connection
+    defer func() { hub.unregister <- connection }()
+    
+    go connection.writePump()
 
+    for {
+        _, message, err := conn.ReadMessage()
         if err != nil {
             log.Println("read:", err)
             break
         }
         log.Printf("recv: %s", message)
 
-        if string(message) == "up" {
-			log.Println("up pressed")
+        // Broadcast the message to all connections
+        hub.broadcast <- message
+    }
+}
+
+func (c *Connection) writePump() {
+    defer func() {
+        c.ws.Close()
+    }()
+    for {
+        message, ok := <-c.send
+        if !ok {
+            // The hub closed the channel.
+            c.ws.WriteMessage(websocket.CloseMessage, []byte{})
+            return
         }
 
-        // Echo a message back to the client
-		message = append(message, []byte(" received")...)
-        err = conn.WriteMessage(messageType, message)
-
-		if err != nil {
-			log.Println("write:", err)
-			break
-		}
+        c.ws.WriteMessage(websocket.TextMessage, message)
     }
 }

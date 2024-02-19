@@ -1,24 +1,24 @@
 package handlers
 
 import (
-	"database/sql"
-	"encoding/json"
+    "database/sql"
+    "encoding/json"
     "fmt"
-	"log"
-	"net/http"
-	"os"
-	"time"
+    "log"
+    "net/http"
+    "os"
+    "time"
     "crypto/rand"
     "encoding/base64"
     "strconv"
-    
-	"github.com/golang-jwt/jwt/v4"
-	"github.com/mapleleafu/flaparena/flaparena-backend/pkg/config"
-	"github.com/mapleleafu/flaparena/flaparena-backend/pkg/models"
+
+    "github.com/golang-jwt/jwt/v4"
+    "github.com/mapleleafu/flaparena/flaparena-backend/pkg/config"
+    "github.com/mapleleafu/flaparena/flaparena-backend/pkg/models"
     "github.com/mapleleafu/flaparena/flaparena-backend/pkg/utils"
     "github.com/mapleleafu/flaparena/flaparena-backend/pkg/responses"
-	"github.com/mapleleafu/flaparena/flaparena-backend/pkg/repository"
-	"golang.org/x/crypto/bcrypt"
+    "github.com/mapleleafu/flaparena/flaparena-backend/pkg/repository"
+    "golang.org/x/crypto/bcrypt"
 )
 
 func Register(w http.ResponseWriter, r *http.Request) {
@@ -236,7 +236,7 @@ func ValidateToken(tokenStr string) (*models.CustomClaims, error) {
         if _, ok := token.Method.(*jwt.SigningMethodHMAC); !ok {
             return nil, fmt.Errorf("unexpected signing method: %v", token.Header["alg"])
         }
-        log.Printf("inside auth.go validatetoken func Validating token with claims: %+v", claims)
+        
         return []byte(secretKey), nil
     })
 
