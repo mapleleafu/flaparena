@@ -11,19 +11,18 @@ import (
     "crypto/rand"
     "encoding/base64"
     "strconv"
-
-    "github.com/golang-jwt/jwt/v4"
-    "github.com/mapleleafu/flaparena/flaparena-backend/pkg/config"
-    "github.com/mapleleafu/flaparena/flaparena-backend/pkg/models"
-    "github.com/mapleleafu/flaparena/flaparena-backend/pkg/utils"
-    "github.com/mapleleafu/flaparena/flaparena-backend/pkg/responses"
-    "github.com/mapleleafu/flaparena/flaparena-backend/pkg/repository"
+    
     "golang.org/x/crypto/bcrypt"
+    "github.com/golang-jwt/jwt/v4"
+    "github.com/mapleleafu/flaparena/flaparena-backend/models"
+    "github.com/mapleleafu/flaparena/flaparena-backend/utils"
+    "github.com/mapleleafu/flaparena/flaparena-backend/responses"
+    "github.com/mapleleafu/flaparena/flaparena-backend/repository"
+
 )
 
 func Register(w http.ResponseWriter, r *http.Request) {
-    db := repository.ConnectToDB(config.LoadConfig())
-    defer db.Close()
+    db := repository.PostgreSQLDB
 
     var user models.User
     err := json.NewDecoder(r.Body).Decode(&user)
@@ -60,8 +59,7 @@ func Register(w http.ResponseWriter, r *http.Request) {
 }
 
 func Login(w http.ResponseWriter, r *http.Request) {
-    db := repository.ConnectToDB(config.LoadConfig())
-    defer db.Close()
+    db := repository.PostgreSQLDB
 
     var loginInfo models.User
     err := json.NewDecoder(r.Body).Decode(&loginInfo)
@@ -147,9 +145,7 @@ func generateRefreshToken() (string, error) {
 
 func Logout(w http.ResponseWriter, r *http.Request) {
     refreshTokenCookie, err := r.Cookie("refresh_token")
-
-    db := repository.ConnectToDB(config.LoadConfig())
-    defer db.Close()
+    db := repository.PostgreSQLDB
 
     if err == nil {
         _, dbErr := db.Exec("DELETE FROM refresh_tokens WHERE token = $1", refreshTokenCookie.Value)
@@ -180,9 +176,7 @@ func RefreshToken(w http.ResponseWriter, r *http.Request) {
         utils.HandleError(w, responses.UnauthorizedError{Msg: "No refresh token found."})
         return
     }
-
-    db := repository.ConnectToDB(config.LoadConfig())
-    defer db.Close()
+    db := repository.PostgreSQLDB
 
     var userID int
     var expiresAt time.Time

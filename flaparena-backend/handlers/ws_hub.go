@@ -2,13 +2,13 @@ package handlers
 
 import (
     "github.com/gorilla/websocket"
-    "sync"
 )
 
 // Connection represents a WebSocket connection and the user it belongs to.
 type Connection struct {
-    ws   *websocket.Conn
-    send chan []byte // Channel for messages to be sent.
+    ws       *websocket.Conn
+    send     chan []byte
+    userID   uint64
 }
 
 // Hub maintains the set of active connections and broadcasts messages to the connections.
@@ -19,13 +19,11 @@ type Hub struct {
     // Inbound messages from the connections.
     broadcast chan []byte
 
-    // Register requests from the connections.
     register chan *Connection
 
-    // Unregister requests from connections.
     unregister chan *Connection
 
-    mutex sync.Mutex // Ensure thread safety
+    // mutex sync.Mutex // Ensure thread safety
 }
 
 var hub = &Hub{

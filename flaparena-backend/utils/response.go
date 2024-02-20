@@ -3,8 +3,8 @@ package utils
 import (
     "encoding/json"
     "net/http"
-    "github.com/mapleleafu/flaparena/flaparena-backend/pkg/models"
-    "github.com/mapleleafu/flaparena/flaparena-backend/pkg/responses"
+    "github.com/mapleleafu/flaparena/flaparena-backend/models"
+    "github.com/mapleleafu/flaparena/flaparena-backend/responses"
 )
 
 func HandleSuccess(w http.ResponseWriter, response models.ApiResponse) {

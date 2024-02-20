@@ -3,15 +3,21 @@ package main
 import (
     "log"
     "net/http"
+
+    "github.com/mapleleafu/flaparena/flaparena-backend/config"
+    "github.com/mapleleafu/flaparena/flaparena-backend/repository"
     "github.com/gorilla/mux"
     "github.com/joho/godotenv"
-    "github.com/mapleleafu/flaparena/flaparena-backend/pkg/handlers"
+    "github.com/mapleleafu/flaparena/flaparena-backend/handlers"
 )
 
 func main() {
     if err := godotenv.Load(); err != nil {
-        log.Println("No .env file found")
+        log.Fatal("Error loading .env file:", err)
     }
+
+    repository.ConnectToPostgreSQL(config.LoadConfig())
+    repository.ConnectMongoDB()
 
     r := mux.NewRouter()
     r.HandleFunc("/api/register", handlers.Register).Methods("POST")

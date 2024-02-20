@@ -4,12 +4,12 @@ import (
     "database/sql"
     "fmt"
     "log"
-    "github.com/mapleleafu/flaparena/flaparena-backend/pkg/config"
-
     _ "github.com/lib/pq"
+    
+    "github.com/mapleleafu/flaparena/flaparena-backend/config"
 )
 
-func ConnectToDB(cfg *config.Config) *sql.DB {
+func ConnectToPostgreSQL(cfg *config.Config) *sql.DB {
     connStr := fmt.Sprintf("host=%s port=%s user=%s password=%s dbname=%s sslmode=disable",
         cfg.DBHost, cfg.DBPort, cfg.DBUser, cfg.DBPassword, cfg.DBName)
 
@@ -22,8 +22,12 @@ func ConnectToDB(cfg *config.Config) *sql.DB {
         db.Close()
         log.Fatal(err)
     } else {
-        log.Println("Successfully Connected to the Database")
+        log.Println("Successfully Connected to PostgreSQL")
     }
 
     return db
 }
+
+var (
+    PostgreSQLDB *sql.DB
+)
