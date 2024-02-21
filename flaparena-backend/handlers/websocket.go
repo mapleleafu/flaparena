@@ -1,25 +1,25 @@
 package handlers
 
 import (
-    "log"
-    "net/http"
-    "strconv"
-    "encoding/json"
-    "context"
-    "sync"
+	"context"
+	"encoding/json"
+	"log"
+	"net/http"
+	"strconv"
+	"sync"
 
-    "github.com/gorilla/mux"
-    "github.com/gorilla/websocket"
-    "github.com/mapleleafu/flaparena/flaparena-backend/responses"
-    "github.com/mapleleafu/flaparena/flaparena-backend/utils"
-    "github.com/mapleleafu/flaparena/flaparena-backend/models"
-    "github.com/mapleleafu/flaparena/flaparena-backend/repository"
+	"github.com/gorilla/mux"
+	"github.com/gorilla/websocket"
+	"github.com/mapleleafu/flaparena/flaparena-backend/models"
+	"github.com/mapleleafu/flaparena/flaparena-backend/repository"
+	"github.com/mapleleafu/flaparena/flaparena-backend/responses"
+	"github.com/mapleleafu/flaparena/flaparena-backend/utils"
 )
 
 var upgrader = websocket.Upgrader{
     ReadBufferSize:  1024,
     WriteBufferSize: 1024,
-    CheckOrigin:     func(r *http.Request) bool { return true }, // Note: Check the origin in production
+    CheckOrigin:     func(r *http.Request) bool { return true },
 }
 
 func WsHandler(w http.ResponseWriter, r *http.Request) {
@@ -43,67 +43,45 @@ func WsHandler(w http.ResponseWriter, r *http.Request) {
         return
     }
 
-    log.Printf("Token validated for user ID: %d, Username: %s", userID, claims.Username)
-
     conn, err := upgrader.Upgrade(w, r, nil)
-
     if err != nil {
-        log.Println(err)
+        log.Println("Upgrade error:", err)
         return
     }
     defer conn.Close()
 
-    connection := &Connection{send: make(chan []byte, 256), ws: conn, userID: userID}
+    connection := &Connection{
+        ws:     conn,
+        send:   make(chan []byte, 256),
+        userID: userID,
+    }
+
+    // Register the connection to the hub for broadcasting and message handling
     hub.register <- connection
+
+    // Cleanup on disconnect
     defer func() { hub.unregister <- connection }()
-    
+
+    // Setup message pumps
     go connection.writePump()
     go connection.readPump()
-
-    for {
-        _, message, err := conn.ReadMessage()
-        if err != nil {
-            log.Println("read:", err)
-            break
-        }
-        log.Printf("recv: %s", message)
-
-        // Broadcast the message to all connections
-        hub.broadcast <- message
-    }
 }
 
 func (c *Connection) readPump() {
+    defer func() {
+        c.ws.Close()
+    }()
+    
     for {
         _, message, err := c.ws.ReadMessage()
         if err != nil {
-            log.Printf("error: %v", err)
+            if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+                log.Printf("error: %v", err)
+            }
             break
         }
-
-        var msg models.GameAction
-        if err := json.Unmarshal(message, &msg); err != nil {
-            log.Printf("error unmarshalling message: %v", err)
-            continue
-        }
-
-        gameAction := models.GameAction{
-            GameID:    "make it increase gameid automatically",
-            PlayerID:  strconv.FormatUint(c.userID, 10), 
-            Action:    msg.Action,
-            Timestamp: msg.Timestamp,
-        }
-
-        // Insert the game action into MongoDB
-        collection := repository.MongoDBClient.Database("flaparena").Collection("game_actions")
-        _, err = collection.InsertOne(context.Background(), gameAction)
-        if err != nil {
-            log.Printf("error inserting game action into MongoDB: %v", err)
-            continue
-        }
-
-        // Broadcast the message to all other players
-        hub.broadcast <- message
+        
+        processMessage(c, message)
     }
 }
 
@@ -116,6 +94,24 @@ func (c *Connection) writePump() {
             return
         }
     }
+}
+
+func processMessage(c *Connection, message []byte) {
+    var msg models.GameAction
+    if err := json.Unmarshal(message, &msg); err != nil {
+        log.Printf("error unmarshalling message: %v", err)
+        return
+    }
+    
+    switch msg.Action {
+    case "ready":
+        log.Printf("ready message")
+    case "up":
+        log.Printf("up message")
+    }
+    
+    // Broadcast the message to other players
+    hub.broadcast <- message
 }
 
 var (
@@ -139,6 +135,7 @@ func handleGameAction(wsMessage []byte, gameID string, userID string) {
 
     // Add the action to the session
     gameSessions[gameID].Actions = append(gameSessions[gameID].Actions, action)
+    log.Printf("Game session %s: %v", gameID, gameSessions[gameID])
 }
 
 func saveGameSessionToMongoDB(gameID string) {
@@ -151,7 +148,6 @@ func saveGameSessionToMongoDB(gameID string) {
         return
     }
 
-    // Example: Insert each action as a separate document
     collection := repository.MongoDBClient.Database("flaparena").Collection("game_actions")
     for _, action := range session.Actions {
         _, err := collection.InsertOne(context.Background(), action)
@@ -166,4 +162,46 @@ func saveGameSessionToMongoDB(gameID string) {
     gameSessionsMutex.Unlock()
 
     log.Printf("Game session %s actions saved to MongoDB", gameID)
+}
+
+var currentGameState = &models.GameState{
+    Players: make(map[string]*models.PlayerState),
+    Started: false,
+}
+
+func playerReady(userID string) {
+    currentGameState.Mutex.Lock()
+    defer currentGameState.Mutex.Unlock()
+
+    if player, exists := currentGameState.Players[userID]; exists {
+        player.Ready = true
+    } else {
+        currentGameState.Players[userID] = &models.PlayerState{
+            UserID:   userID,
+            Ready:    true,
+            Alive:    true,
+            Score:    0,
+        }
+    }
+    log.Printf("Player %s is ready", userID)
+}
+
+func checkAllPlayersReady() bool {
+    for _, player := range currentGameState.Players {
+        if !player.Ready {
+            return false
+        }
+    }
+    return true
+}
+
+func startGame() {
+    currentGameState.Mutex.Lock()
+    defer currentGameState.Mutex.Unlock()
+
+    if checkAllPlayersReady() && !currentGameState.Started {
+        currentGameState.Started = true
+
+        log.Println("Game started")
+    }
 }

@@ -21,11 +21,11 @@ func ConnectToPostgreSQL(cfg *config.Config) *sql.DB {
     if err := db.Ping(); err != nil {
         db.Close()
         log.Fatal(err)
-    } else {
-        log.Println("Successfully Connected to PostgreSQL")
     }
+    PostgreSQLDB = db
 
-    return db
+    log.Println("Successfully connected to PostgreSQL")
+    return nil
 }
 
 var (
