@@ -28,7 +28,6 @@ func WsHandler(w http.ResponseWriter, r *http.Request) {
 
     // Validate the token
     claims, err := ValidateToken(tokenStr)
-
     if err != nil {
         log.Println(err)
         utils.HandleError(w, responses.UnauthorizedError{Msg: "Error validating token."})
@@ -37,7 +36,6 @@ func WsHandler(w http.ResponseWriter, r *http.Request) {
 
     // Convert ID back to uint
     userID, err := strconv.ParseUint(claims.ID, 10, 64)
-
     if err != nil {
         log.Println(err)
         return
@@ -50,11 +48,7 @@ func WsHandler(w http.ResponseWriter, r *http.Request) {
     }
     defer conn.Close()
 
-    connection := &Connection{
-        ws:     conn,
-        send:   make(chan []byte, 256),
-        userID: userID,
-    }
+    connection := &Connection{send: make(chan []byte, 256), ws: conn, userID: userID}
 
     // Register the connection to the hub for broadcasting and message handling
     hub.register <- connection
@@ -62,22 +56,23 @@ func WsHandler(w http.ResponseWriter, r *http.Request) {
     // Cleanup on disconnect
     defer func() { hub.unregister <- connection }()
 
-    // Setup message pumps
     go connection.writePump()
-    go connection.readPump()
+    connection.readPump()
 }
 
 func (c *Connection) readPump() {
     defer func() {
+        hub.unregister <- c
         c.ws.Close()
-    }()
-    
+        }()
+
     for {
         _, message, err := c.ws.ReadMessage()
         if err != nil {
-            if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-                log.Printf("error: %v", err)
-            }
+            log.Printf("error reading message: %v", err)
+			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
+				log.Printf("error: %v", err)
+			}
             break
         }
         
@@ -89,9 +84,11 @@ func (c *Connection) writePump() {
     defer func() {
         c.ws.Close()
     }()
+
     for message := range c.send {
         if err := c.ws.WriteMessage(websocket.TextMessage, message); err != nil {
-            return
+            log.Printf("error writing message: %v", err)
+            break
         }
     }
 }
@@ -105,12 +102,14 @@ func processMessage(c *Connection, message []byte) {
     
     switch msg.Action {
     case "ready":
-        log.Printf("ready message")
-    case "up":
-        log.Printf("up message")
+        playerReady(strconv.FormatUint(c.userID, 10))
+        startGame()
+    case "flap":
+        log.Printf("Player %s flapped", strconv.FormatUint(c.userID, 10))
     }
     
     // Broadcast the message to other players
+    message = append([]byte("UserID: " + strconv.FormatUint(c.userID, 10) + ": "), message...)
     hub.broadcast <- message
 }
 
