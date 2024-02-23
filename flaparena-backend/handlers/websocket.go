@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"sync"
 
+    "github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
 	"github.com/mapleleafu/flaparena/flaparena-backend/models"
@@ -100,17 +101,58 @@ func processMessage(c *Connection, message []byte) {
         return
     }
     
+    userIDStr := strconv.FormatUint(c.userID, 10)
+    message = append([]byte("UserID: " + userIDStr + ": "), message...)
+    
     switch msg.Action {
     case "ready":
-        playerReady(strconv.FormatUint(c.userID, 10))
-        startGame()
+        if !currentGameState.Started {
+            if _, exists := currentGameState.Players[userIDStr]; exists {
+                hub.broadcast <- append([]byte("You already readied up UserID: "), []byte(userIDStr)...)
+            } else {
+                playerReady(userIDStr)
+                hub.broadcast <- message
+                startGame()
+            }
+        } else {
+            hub.broadcast <- append([]byte("Game already started UserID: "), []byte(userIDStr)...)
+        }
     case "flap":
-        log.Printf("Player %s flapped", strconv.FormatUint(c.userID, 10))
+        if currentGameState.Started {
+            if _, exists := currentGameState.Players[userIDStr]; exists {
+                hub.broadcast <- message
+                handleGameAction(message, msg.GameID, userIDStr)
+            } else {
+                hub.broadcast <- append([]byte("Player not found UserID: "), []byte(userIDStr)...)
+            }
+        } else {
+            hub.broadcast <- append([]byte("Game not started UserID: "), []byte(userIDStr)...)
+        }
+    case "score":
+        if currentGameState.Started {
+            if _, exists := currentGameState.Players[userIDStr]; exists {
+                playerScored(userIDStr)
+                handleGameAction(message, msg.GameID, userIDStr)
+            } else {
+                hub.broadcast <- append([]byte("Player not found UserID: "), []byte(userIDStr)...)
+            }
+        } else {
+            hub.broadcast <- append([]byte("Game not started UserID: "), []byte(userIDStr)...)
+        }
+    case "dead":
+        if currentGameState.Started {
+            if _, exists := currentGameState.Players[userIDStr]; exists {
+                hub.broadcast <- message
+                playerDead(userIDStr)
+                handleGameAction(message, msg.GameID, userIDStr)
+                endGame(generatePlaceholderID())
+            } else {
+                hub.broadcast <- append([]byte("Player not found UserID: "), []byte(userIDStr)...)
+            }
+        } else {
+            hub.broadcast <- append([]byte("Game not started UserID: "), []byte(userIDStr)...)
+        }
     }
-    
-    // Broadcast the message to other players
-    message = append([]byte("UserID: " + strconv.FormatUint(c.userID, 10) + ": "), message...)
-    hub.broadcast <- message
 }
 
 var (
@@ -134,33 +176,28 @@ func handleGameAction(wsMessage []byte, gameID string, userID string) {
 
     // Add the action to the session
     gameSessions[gameID].Actions = append(gameSessions[gameID].Actions, action)
-    log.Printf("Game session %s: %v", gameID, gameSessions[gameID])
 }
 
-func saveGameSessionToMongoDB(gameID string) {
+func saveGameSessionToMongoDB(placeholderID string) {
     gameSessionsMutex.Lock()
-    session, exists := gameSessions[gameID]
+    session, exists := gameSessions[placeholderID]
+    if !exists {
+        log.Printf("Game session with placeholder ID %s not found", placeholderID)
+        gameSessionsMutex.Unlock()
+        return
+    }
+    delete(gameSessions, placeholderID) // Remove the session from the map
     gameSessionsMutex.Unlock()
 
-    if !exists {
-        log.Printf("Game session %s not found", gameID)
+    collection := repository.MongoDBClient.Database("flaparena").Collection("game_sessions")
+    result, err := collection.InsertOne(context.Background(), session)
+    if err != nil {
+        log.Printf("Failed to insert game session into MongoDB: %v", err)
         return
     }
 
-    collection := repository.MongoDBClient.Database("flaparena").Collection("game_actions")
-    for _, action := range session.Actions {
-        _, err := collection.InsertOne(context.Background(), action)
-        if err != nil {
-            log.Printf("Failed to insert game action into MongoDB: %v", err)
-        }
-    }
-
-    // Cleanup: Remove the session from the map after saving
-    gameSessionsMutex.Lock()
-    delete(gameSessions, gameID)
-    gameSessionsMutex.Unlock()
-
-    log.Printf("Game session %s actions saved to MongoDB", gameID)
+    realGameID := result.InsertedID.(string) // Cast to string or use appropriate type
+    log.Printf("Game session saved to MongoDB with ID %s", realGameID)
 }
 
 var currentGameState = &models.GameState{
@@ -187,6 +224,7 @@ func playerReady(userID string) {
 
 func checkAllPlayersReady() bool {
     for _, player := range currentGameState.Players {
+        log.Print(player)
         if !player.Ready {
             return false
         }
@@ -194,13 +232,77 @@ func checkAllPlayersReady() bool {
     return true
 }
 
+func checkAllPlayersDead() bool {
+    for _, player := range currentGameState.Players {
+        if player.Alive {
+            return false
+        }
+    }
+    return true
+}
+
+func playerScored(userID string) {
+    currentGameState.Mutex.Lock()
+    defer currentGameState.Mutex.Unlock()
+
+    if player, exists := currentGameState.Players[userID]; exists {
+        player.Score++
+    }
+}
+
+func playerDead(userID string) {
+    currentGameState.Mutex.Lock()
+    defer currentGameState.Mutex.Unlock()
+
+    if player, exists := currentGameState.Players[userID]; exists {
+        player.Alive = false
+    }
+}
+
 func startGame() {
     currentGameState.Mutex.Lock()
     defer currentGameState.Mutex.Unlock()
 
-    if checkAllPlayersReady() && !currentGameState.Started {
-        currentGameState.Started = true
-
-        log.Println("Game started")
+    // Count ready players
+    readyPlayers := 0
+    for _, player := range currentGameState.Players {
+        if player.Ready && readyPlayers <= 20 {
+            readyPlayers++
+        } else {
+            log.Printf("max is 20 players, %d players are ready", readyPlayers)
+        }
     }
+
+    if readyPlayers >= 2 && !currentGameState.Started && checkAllPlayersReady() {
+        startNewGameSession()
+        currentGameState.Started = true
+        log.Println("Game started")
+        hub.broadcast <- []byte("Game started!")
+    }
+}
+
+func endGame(placeholderID string) {
+    log.Printf("Ending game with placeholderID %s", placeholderID)
+    if checkAllPlayersDead() {
+        currentGameState.Started = false
+        saveGameSessionToMongoDB(placeholderID)
+        log.Println("Game ended")
+        hub.broadcast <- []byte("Game ended!")
+    } else {
+        log.Println("Not all players dead yet.")
+    }
+}
+
+func startNewGameSession() *models.GameSession {
+    session := &models.GameSession{}
+    gameSessionsMutex.Lock()
+    // Use a temporary ID or timestamp as a placeholder key
+    placeholderID := generatePlaceholderID()
+    gameSessions[placeholderID] = session
+    gameSessionsMutex.Unlock()
+    return session
+}
+
+func generatePlaceholderID() string {
+    return uuid.New().String()
 }

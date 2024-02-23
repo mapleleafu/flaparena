@@ -14,5 +14,8 @@ type GameAction struct {
 
 // GameSession represents all actions taken in a single game session.
 type GameSession struct {
-    Actions []GameAction
+    ID      string       `bson:"_id,omitempty"`
+    Actions []GameAction `bson:"actions"`
+    // StartingTimestamp int64 `bson:"startingTimestamp"`
+    // EndingTimestamp   int64 `bson:"endingTimestamp"`
 }
