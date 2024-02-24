@@ -16,6 +16,4 @@ type GameAction struct {
 type GameSession struct {
     ID      string       `bson:"_id,omitempty"`
     Actions []GameAction `bson:"actions"`
-    // StartingTimestamp int64 `bson:"startingTimestamp"`
-    // EndingTimestamp   int64 `bson:"endingTimestamp"`
 }

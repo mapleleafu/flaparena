@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"sync"
 
+    "go.mongodb.org/mongo-driver/bson/primitive"
     "github.com/google/uuid"
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
@@ -145,7 +146,9 @@ func processMessage(c *Connection, message []byte) {
                 hub.broadcast <- message
                 playerDead(userIDStr)
                 handleGameAction(message, msg.GameID, userIDStr)
-                endGame(generatePlaceholderID())
+                if checkAllPlayersDead() {
+                    endGame()
+                }
             } else {
                 hub.broadcast <- append([]byte("Player not found UserID: "), []byte(userIDStr)...)
             }
@@ -196,13 +199,16 @@ func saveGameSessionToMongoDB(placeholderID string) {
         return
     }
 
-    realGameID := result.InsertedID.(string) // Cast to string or use appropriate type
+    // Correctly handle the InsertedID as primitive.ObjectID and convert it to string
+    realGameID := result.InsertedID.(primitive.ObjectID).Hex()
     log.Printf("Game session saved to MongoDB with ID %s", realGameID)
 }
 
 var currentGameState = &models.GameState{
     Players: make(map[string]*models.PlayerState),
     Started: false,
+    Mutex:   sync.Mutex{},
+    GameID: "",
 }
 
 func playerReady(userID string) {
@@ -263,29 +269,35 @@ func startGame() {
     currentGameState.Mutex.Lock()
     defer currentGameState.Mutex.Unlock()
 
-    // Count ready players
     readyPlayers := 0
     for _, player := range currentGameState.Players {
         if player.Ready && readyPlayers <= 20 {
             readyPlayers++
         } else {
-            log.Printf("max is 20 players, %d players are ready", readyPlayers)
+            log.Printf("Max is 20 players, %d players are ready", readyPlayers)
         }
     }
-
+    log.Printf("readyPlayers: %d", readyPlayers)
     if readyPlayers >= 2 && !currentGameState.Started && checkAllPlayersReady() {
-        startNewGameSession()
+        log.Printf("Starting game with %d players", readyPlayers)
+        GameID := startNewGameSession()
+        log.Printf("after startNewGameSession: %s", GameID)
+        currentGameState.GameID = GameID
         currentGameState.Started = true
         log.Println("Game started")
         hub.broadcast <- []byte("Game started!")
     }
 }
 
-func endGame(placeholderID string) {
-    log.Printf("Ending game with placeholderID %s", placeholderID)
+func endGame() {
+    log.Printf("Ending game with placeholderID %s", currentGameState.GameID)
     if checkAllPlayersDead() {
+        currentGameState.Mutex.Lock()
+        gameID := currentGameState.GameID
+        currentGameState.Mutex.Unlock()
         currentGameState.Started = false
-        saveGameSessionToMongoDB(placeholderID)
+        saveGameSessionToMongoDB(gameID)
+        currentGameState.GameID = "" // Reset placeholder ID
         log.Println("Game ended")
         hub.broadcast <- []byte("Game ended!")
     } else {
@@ -293,14 +305,16 @@ func endGame(placeholderID string) {
     }
 }
 
-func startNewGameSession() *models.GameSession {
-    session := &models.GameSession{}
+func startNewGameSession() string {
+    log.Println("Generating GameID...")
+    placeholderID  := generatePlaceholderID()
+    log.Println("Generated GameID:", placeholderID )
+
+    // Initialize a new game session with this ID
     gameSessionsMutex.Lock()
-    // Use a temporary ID or timestamp as a placeholder key
-    placeholderID := generatePlaceholderID()
-    gameSessions[placeholderID] = session
-    gameSessionsMutex.Unlock()
-    return session
+    defer gameSessionsMutex.Unlock()
+    gameSessions[placeholderID] = &models.GameSession{}
+    return placeholderID
 }
 
 func generatePlaceholderID() string {
