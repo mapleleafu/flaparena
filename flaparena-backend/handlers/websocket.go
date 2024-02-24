@@ -148,9 +148,7 @@ func handleReadyAction(action models.GameAction, c *Connection) {
                 Score:    0,
             }
             hub.broadcast <- []byte(fmt.Sprintf("'SERVER' - Player %s readied up.", action.UserID))
-            log.Printf("after broadcast in handleReadyAction")
             startGame()
-            log.Printf("after startGame() in handleReadyAction")
         } else {
             hub.broadcast <- []byte(fmt.Sprintf("'SERVER' - You already readied up UserID: %s", action.UserID))
         }
@@ -208,16 +206,16 @@ func handleDeadAction(action models.GameAction, c *Connection) {
             player.Alive = false
             log.Printf("Player %s is dead", action.UserID)
 
-            // Broadcast the 'dead' action to all clients
             broadcastAction := fmt.Sprintf("'SERVER' - Player %s is dead.", action.UserID)
             hub.broadcast <- []byte(broadcastAction)
 
-            // Log the action in the game session
             handleGameAction(action, currentGameState.GameID)
 
             // Check if all players are dead and end the game if so
             if checkAllPlayersDead() {
                 endGame()
+            } else {
+                log.Printf("Not all players dead yet.")
             }
         } else {
             // Player not found
@@ -245,30 +243,6 @@ func handleGameAction(action models.GameAction, gameID string) {
     gameSessions[gameID].Actions = append(gameSessions[gameID].Actions, action)
 }
 
-
-// func handleGameAction(wsMessage []byte, gameID string, userID string) {
-//     // Unmarshal the incoming WebSocket message into a GameAction
-//     var action models.GameAction
-//     log.Printf("Raw message: %s", string(wsMessage))
-//     err := json.Unmarshal(wsMessage, &action)
-//     if err != nil {
-//         log.Printf("Error unmarshalling wsMessage: %v", err)
-//         return
-//     }
-
-//     // Safely access the gameSessions map
-//     gameSessionsMutex.Lock()
-//     defer gameSessionsMutex.Unlock()
-
-//     // Initialize the game session in the map if it doesn't exist
-//     if _, exists := gameSessions[gameID]; !exists {
-//         gameSessions[gameID] = &models.GameSession{}
-//     }
-
-//     // Add the action to the session
-//     gameSessions[gameID].Actions = append(gameSessions[gameID].Actions, action)
-// }
-
 func saveGameSessionToMongoDB(placeholderID string) {
     gameSessionsMutex.Lock()
     session, exists := gameSessions[placeholderID]
@@ -279,7 +253,7 @@ func saveGameSessionToMongoDB(placeholderID string) {
     }
     delete(gameSessions, placeholderID) // Remove the session from the map
     gameSessionsMutex.Unlock()
-
+    
     collection := repository.MongoDBClient.Database("flaparena").Collection("game_sessions")
     result, err := collection.InsertOne(context.Background(), session)
     if err != nil {
@@ -327,11 +301,7 @@ func playerScored(userID string) {
     }
 }
 
-
 func startGame() {
-    // currentGameState.Mutex.Lock()
-    // defer currentGameState.Mutex.Unlock()
-
     readyPlayers := 0
     for _, player := range currentGameState.Players {
         if player.Ready && readyPlayers <= 20 {
@@ -362,11 +332,8 @@ func startGame() {
 }
 
 func endGame() {
-    log.Printf("Ending game with placeholderID %s", currentGameState.GameID)
     if checkAllPlayersDead() {
-        currentGameState.Mutex.Lock()
         gameID := currentGameState.GameID
-        currentGameState.Mutex.Unlock()
         currentGameState.Started = false
         log.Println("Game ended")
 
@@ -386,7 +353,6 @@ func endGame() {
 }
 
 func startNewGameSession() string {
-    log.Println("Generating GameID...")
     placeholderID  := generatePlaceholderID()
     log.Println("Generated GameID:", placeholderID )
 
