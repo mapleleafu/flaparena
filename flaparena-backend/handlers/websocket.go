@@ -7,6 +7,8 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+    "fmt"
+    "time"
 
     "go.mongodb.org/mongo-driver/bson/primitive"
     "github.com/google/uuid"
@@ -23,6 +25,11 @@ var upgrader = websocket.Upgrader{
     WriteBufferSize: 1024,
     CheckOrigin:     func(r *http.Request) bool { return true },
 }
+
+var (
+    gameSessions = make(map[string]*models.GameSession)
+    gameSessionsMutex = &sync.Mutex{}
+)
 
 func WsHandler(w http.ResponseWriter, r *http.Request) {
     vars := mux.Vars(r)
@@ -95,91 +102,172 @@ func (c *Connection) writePump() {
     }
 }
 
-func processMessage(c *Connection, message []byte) {
-    var msg models.GameAction
-    if err := json.Unmarshal(message, &msg); err != nil {
-        log.Printf("error unmarshalling message: %v", err)
+func processMessage(c *Connection, rawMessage []byte) {
+    log.Printf("Raw message: %s", string(rawMessage))
+
+    var gameActionMsg models.GameActionMessage
+    err := json.Unmarshal(rawMessage, &gameActionMsg)
+    if err != nil {
+        log.Printf("Error unmarshalling game action message: %v", err)
         return
     }
-    
+
     userIDStr := strconv.FormatUint(c.userID, 10)
-    message = append([]byte("UserID: " + userIDStr + ": "), message...)
-    
-    switch msg.Action {
+    gameAction := models.GameAction{
+        UserID:    userIDStr,
+        Action:    gameActionMsg.Action,
+        Timestamp: gameActionMsg.Timestamp,
+    }
+
+    switch gameAction.Action {
     case "ready":
-        if !currentGameState.Started {
-            if _, exists := currentGameState.Players[userIDStr]; exists {
-                hub.broadcast <- append([]byte("You already readied up UserID: "), []byte(userIDStr)...)
-            } else {
-                playerReady(userIDStr)
-                hub.broadcast <- message
-                startGame()
-            }
-        } else {
-            hub.broadcast <- append([]byte("Game already started UserID: "), []byte(userIDStr)...)
-        }
+        handleReadyAction(gameAction, c)
     case "flap":
-        if currentGameState.Started {
-            if _, exists := currentGameState.Players[userIDStr]; exists {
-                hub.broadcast <- message
-                handleGameAction(message, msg.GameID, userIDStr)
-            } else {
-                hub.broadcast <- append([]byte("Player not found UserID: "), []byte(userIDStr)...)
-            }
-        } else {
-            hub.broadcast <- append([]byte("Game not started UserID: "), []byte(userIDStr)...)
-        }
+        handleFlapAction(gameAction, c)
     case "score":
-        if currentGameState.Started {
-            if _, exists := currentGameState.Players[userIDStr]; exists {
-                playerScored(userIDStr)
-                handleGameAction(message, msg.GameID, userIDStr)
-            } else {
-                hub.broadcast <- append([]byte("Player not found UserID: "), []byte(userIDStr)...)
-            }
-        } else {
-            hub.broadcast <- append([]byte("Game not started UserID: "), []byte(userIDStr)...)
-        }
+        handleScoreAction(gameAction, c)
     case "dead":
-        if currentGameState.Started {
-            if _, exists := currentGameState.Players[userIDStr]; exists {
-                hub.broadcast <- message
-                playerDead(userIDStr)
-                handleGameAction(message, msg.GameID, userIDStr)
-                if checkAllPlayersDead() {
-                    endGame()
-                }
-            } else {
-                hub.broadcast <- append([]byte("Player not found UserID: "), []byte(userIDStr)...)
-            }
-        } else {
-            hub.broadcast <- append([]byte("Game not started UserID: "), []byte(userIDStr)...)
-        }
+        handleDeadAction(gameAction, c)
+    default:
+        log.Printf("Unhandled game action: %s", gameAction.Action)
     }
 }
 
-var (
-    gameSessions = make(map[string]*models.GameSession)
-    gameSessionsMutex = &sync.Mutex{}
-)
+func handleReadyAction(action models.GameAction, c *Connection) {
+    log.Printf("Player %s is ready", action.UserID)
 
-func handleGameAction(wsMessage []byte, gameID string, userID string) {
-    // Unmarshal the incoming WebSocket message into a GameAction
-    var action models.GameAction
-    json.Unmarshal(wsMessage, &action)
+    currentGameState.Mutex.Lock()
+    defer currentGameState.Mutex.Unlock()
 
-    // Safely access the gameSessions map
+    if !currentGameState.Started {
+        if _, exists := currentGameState.Players[action.UserID]; !exists {
+            currentGameState.Players[action.UserID] = &models.PlayerState{
+                UserID:   action.UserID,
+                Ready:    true,
+                Alive:    true,
+                Score:    0,
+            }
+            hub.broadcast <- []byte(fmt.Sprintf("'SERVER' - Player %s readied up.", action.UserID))
+            log.Printf("after broadcast in handleReadyAction")
+            startGame()
+            log.Printf("after startGame() in handleReadyAction")
+        } else {
+            hub.broadcast <- []byte(fmt.Sprintf("'SERVER' - You already readied up UserID: %s", action.UserID))
+        }
+    } else {
+        hub.broadcast <- []byte(fmt.Sprintf("'SERVER' - Game already started UserID: %s", action.UserID))
+    }
+}
+
+func handleFlapAction(action models.GameAction, c *Connection) {
+    log.Printf("Player %s flapped", action.UserID)
+
+    currentGameState.Mutex.Lock()
+    defer currentGameState.Mutex.Unlock()
+
+    if currentGameState.Started {
+        if _, exists := currentGameState.Players[action.UserID]; exists {
+            broadcastAction := fmt.Sprintf("'SERVER' - Player %s flapped.", action.UserID)
+            hub.broadcast <- []byte(broadcastAction)
+            handleGameAction(action, currentGameState.GameID)
+        } else {
+            message := fmt.Sprintf("'SERVER' - Player not found. Ready up UserID: %s", action.UserID)
+            hub.broadcast <- []byte(message)
+        }
+    } else {
+        message := fmt.Sprintf("'SERVER' - Game not started UserID: %s", action.UserID)
+        hub.broadcast <- []byte(message)
+    }
+}
+
+func handleScoreAction(action models.GameAction, c *Connection) {
+    log.Printf("Player %s scored", action.UserID)
+
+    currentGameState.Mutex.Lock()
+    defer currentGameState.Mutex.Unlock()
+
+    if currentGameState.Started {
+        if _, exists := currentGameState.Players[action.UserID]; exists {
+            playerScored(action.UserID)
+            handleGameAction(action, currentGameState.GameID)
+        } else {
+            hub.broadcast <- []byte(fmt.Sprintf("'SERVER' - Player not found. Ready up UserID: %s", action.UserID))
+        }
+    } else {
+        hub.broadcast <- []byte(fmt.Sprintf("'SERVER' - Game not started UserID: %s", action.UserID))
+    }
+}
+
+func handleDeadAction(action models.GameAction, c *Connection) {
+    currentGameState.Mutex.Lock()
+    defer currentGameState.Mutex.Unlock()
+
+    if currentGameState.Started {
+        if player, exists := currentGameState.Players[action.UserID]; exists {
+            // Player is dead
+            player.Alive = false
+            log.Printf("Player %s is dead", action.UserID)
+
+            // Broadcast the 'dead' action to all clients
+            broadcastAction := fmt.Sprintf("'SERVER' - Player %s is dead.", action.UserID)
+            hub.broadcast <- []byte(broadcastAction)
+
+            // Log the action in the game session
+            handleGameAction(action, currentGameState.GameID)
+
+            // Check if all players are dead and end the game if so
+            if checkAllPlayersDead() {
+                endGame()
+            }
+        } else {
+            // Player not found
+            missingPlayerMessage := fmt.Sprintf("'SERVER' - Player not found. Ready up UserID: %s", action.UserID)
+            hub.broadcast <- []byte(missingPlayerMessage)
+        }
+    } else {
+        // Game not started
+        gameNotStartedMessage := fmt.Sprintf("'SERVER' - Game not started UserID: %s", action.UserID)
+        hub.broadcast <- []byte(gameNotStartedMessage)
+    }
+}
+
+func handleGameAction(action models.GameAction, gameID string) {
+    // Safely access the gameSessions map.
     gameSessionsMutex.Lock()
     defer gameSessionsMutex.Unlock()
 
-    // Initialize the game session in the map if it doesn't exist
+    // Initialize the game session in the map if it doesn't exist.
     if _, exists := gameSessions[gameID]; !exists {
         gameSessions[gameID] = &models.GameSession{}
     }
 
-    // Add the action to the session
+    // Add the action to the session.
     gameSessions[gameID].Actions = append(gameSessions[gameID].Actions, action)
 }
+
+
+// func handleGameAction(wsMessage []byte, gameID string, userID string) {
+//     // Unmarshal the incoming WebSocket message into a GameAction
+//     var action models.GameAction
+//     log.Printf("Raw message: %s", string(wsMessage))
+//     err := json.Unmarshal(wsMessage, &action)
+//     if err != nil {
+//         log.Printf("Error unmarshalling wsMessage: %v", err)
+//         return
+//     }
+
+//     // Safely access the gameSessions map
+//     gameSessionsMutex.Lock()
+//     defer gameSessionsMutex.Unlock()
+
+//     // Initialize the game session in the map if it doesn't exist
+//     if _, exists := gameSessions[gameID]; !exists {
+//         gameSessions[gameID] = &models.GameSession{}
+//     }
+
+//     // Add the action to the session
+//     gameSessions[gameID].Actions = append(gameSessions[gameID].Actions, action)
+// }
 
 func saveGameSessionToMongoDB(placeholderID string) {
     gameSessionsMutex.Lock()
@@ -211,23 +299,6 @@ var currentGameState = &models.GameState{
     GameID: "",
 }
 
-func playerReady(userID string) {
-    currentGameState.Mutex.Lock()
-    defer currentGameState.Mutex.Unlock()
-
-    if player, exists := currentGameState.Players[userID]; exists {
-        player.Ready = true
-    } else {
-        currentGameState.Players[userID] = &models.PlayerState{
-            UserID:   userID,
-            Ready:    true,
-            Alive:    true,
-            Score:    0,
-        }
-    }
-    log.Printf("Player %s is ready", userID)
-}
-
 func checkAllPlayersReady() bool {
     for _, player := range currentGameState.Players {
         log.Print(player)
@@ -256,18 +327,10 @@ func playerScored(userID string) {
     }
 }
 
-func playerDead(userID string) {
-    currentGameState.Mutex.Lock()
-    defer currentGameState.Mutex.Unlock()
-
-    if player, exists := currentGameState.Players[userID]; exists {
-        player.Alive = false
-    }
-}
 
 func startGame() {
-    currentGameState.Mutex.Lock()
-    defer currentGameState.Mutex.Unlock()
+    // currentGameState.Mutex.Lock()
+    // defer currentGameState.Mutex.Unlock()
 
     readyPlayers := 0
     for _, player := range currentGameState.Players {
@@ -277,15 +340,24 @@ func startGame() {
             log.Printf("Max is 20 players, %d players are ready", readyPlayers)
         }
     }
+
     log.Printf("readyPlayers: %d", readyPlayers)
+
     if readyPlayers >= 2 && !currentGameState.Started && checkAllPlayersReady() {
         log.Printf("Starting game with %d players", readyPlayers)
         GameID := startNewGameSession()
-        log.Printf("after startNewGameSession: %s", GameID)
         currentGameState.GameID = GameID
         currentGameState.Started = true
         log.Println("Game started")
-        hub.broadcast <- []byte("Game started!")
+        gameStartedAction := models.GameAction{
+            UserID:    "server",
+            Action:    "startGame",
+            Timestamp: time.Now().UnixNano() / int64(time.Millisecond),
+        }
+        handleGameAction(gameStartedAction, currentGameState.GameID)
+        hub.broadcast <- []byte("'SERVER' - Game started!")
+    } else {
+        log.Println("Not all players ready yet or game already started or not enough players ready yet.")
     }
 }
 
@@ -296,10 +368,18 @@ func endGame() {
         gameID := currentGameState.GameID
         currentGameState.Mutex.Unlock()
         currentGameState.Started = false
+        log.Println("Game ended")
+
+        gameEndedAction := models.GameAction{
+            UserID:    "server",
+            Action:    "Game ended",
+            Timestamp: time.Now().UnixNano() / int64(time.Millisecond),
+        }
+        handleGameAction(gameEndedAction, currentGameState.GameID)
+
+        hub.broadcast <- []byte("'SERVER' - Game ended!")
         saveGameSessionToMongoDB(gameID)
         currentGameState.GameID = "" // Reset placeholder ID
-        log.Println("Game ended")
-        hub.broadcast <- []byte("Game ended!")
     } else {
         log.Println("Not all players dead yet.")
     }

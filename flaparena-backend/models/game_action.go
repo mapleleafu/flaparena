@@ -6,10 +6,14 @@ type GameActionMessage struct {
 }
 
 type GameAction struct {
-    GameID    string `bson:"gameId"`
-    PlayerID  string `bson:"playerId"`
+    UserID  string `bson:"userId"`
     Action    string `bson:"action"`
     Timestamp int64  `bson:"timestamp"`
+}
+
+type GameEvent struct {
+    UserID  string `bson:"userId"`
+    GameAction []GameAction `bson:"gameAction"`
 }
 
 // GameSession represents all actions taken in a single game session.
