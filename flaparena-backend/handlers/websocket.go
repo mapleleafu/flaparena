@@ -9,6 +9,7 @@ import (
 	"sync"
     "fmt"
     "time"
+    "github.com/lib/pq"
 
     "go.mongodb.org/mongo-driver/bson/primitive"
     "github.com/google/uuid"
@@ -30,6 +31,13 @@ var (
     gameSessions = make(map[string]*models.GameSession)
     gameSessionsMutex = &sync.Mutex{}
 )
+
+var currentGameState = &models.GameState{
+    Players: make(map[string]*models.PlayerState),
+    Started: false,
+    Mutex:   sync.Mutex{},
+    GameID: "",
+}
 
 func WsHandler(w http.ResponseWriter, r *http.Request) {
     vars := mux.Vars(r)
@@ -179,11 +187,6 @@ func handleFlapAction(action models.GameAction, c *Connection) {
 }
 
 func handleScoreAction(action models.GameAction, c *Connection) {
-    log.Printf("Player %s scored", action.UserID)
-
-    currentGameState.Mutex.Lock()
-    defer currentGameState.Mutex.Unlock()
-
     if currentGameState.Started {
         if _, exists := currentGameState.Players[action.UserID]; exists {
             playerScored(action.UserID)
@@ -243,13 +246,13 @@ func handleGameAction(action models.GameAction, gameID string) {
     gameSessions[gameID].Actions = append(gameSessions[gameID].Actions, action)
 }
 
-func saveGameSessionToMongoDB(placeholderID string) {
+func saveGameSessionToMongoDB(placeholderID string) (string, *models.GameSession) {
     gameSessionsMutex.Lock()
     session, exists := gameSessions[placeholderID]
     if !exists {
         log.Printf("Game session with placeholder ID %s not found", placeholderID)
         gameSessionsMutex.Unlock()
-        return
+        return "", session
     }
     delete(gameSessions, placeholderID) // Remove the session from the map
     gameSessionsMutex.Unlock()
@@ -258,19 +261,48 @@ func saveGameSessionToMongoDB(placeholderID string) {
     result, err := collection.InsertOne(context.Background(), session)
     if err != nil {
         log.Printf("Failed to insert game session into MongoDB: %v", err)
-        return
+        return "", session
     }
 
     // Correctly handle the InsertedID as primitive.ObjectID and convert it to string
     realGameID := result.InsertedID.(primitive.ObjectID).Hex()
     log.Printf("Game session saved to MongoDB with ID %s", realGameID)
+    return realGameID, session
 }
 
-var currentGameState = &models.GameState{
-    Players: make(map[string]*models.PlayerState),
-    Started: false,
-    Mutex:   sync.Mutex{},
-    GameID: "",
+func saveGameDataToPostgres(gameID string, session *models.GameSession) {
+    var serverStart, serverEnd int64
+    
+    var userIds []string
+    
+    for userID := range currentGameState.Players {
+        userIds = append(userIds, userID)
+    }
+
+    for _, event := range session.Actions {
+        switch event.Action {
+        case "start":
+            serverStart = event.Timestamp
+        case "end":
+            serverEnd = event.Timestamp
+        }
+    }
+
+    serverStartTime := time.UnixMilli(serverStart).UTC().Format(time.RFC3339)
+    serverEndTime := time.UnixMilli(serverEnd).UTC().Format(time.RFC3339)
+
+    db := repository.PostgreSQLDB
+    userIdsForDB := pq.Array(userIds)
+
+    // Save the game session to the PostgreSQL database
+    _, err := db.Exec("INSERT INTO games (id, created_at, finished_at, user_ids) VALUES ($1, $2, $3, $4)", 
+    gameID, serverStartTime, serverEndTime, userIdsForDB)
+    if err != nil {
+        log.Printf("Failed to insert game session into PostgreSQL: %v", err)
+        return
+    }
+    
+    log.Printf("Game session saved to PostgreSQL with ID %s", gameID)
 }
 
 func checkAllPlayersReady() bool {
@@ -299,6 +331,8 @@ func playerScored(userID string) {
     if player, exists := currentGameState.Players[userID]; exists {
         player.Score++
     }
+    
+    log.Printf("Player %s scored", userID)
 }
 
 func startGame() {
@@ -321,7 +355,7 @@ func startGame() {
         log.Println("Game started")
         gameStartedAction := models.GameAction{
             UserID:    "server",
-            Action:    "startGame",
+            Action:    "start",
             Timestamp: time.Now().UnixNano() / int64(time.Millisecond),
         }
         handleGameAction(gameStartedAction, currentGameState.GameID)
@@ -334,19 +368,21 @@ func startGame() {
 func endGame() {
     if checkAllPlayersDead() {
         gameID := currentGameState.GameID
-        currentGameState.Started = false
         log.Println("Game ended")
 
         gameEndedAction := models.GameAction{
             UserID:    "server",
-            Action:    "Game ended",
+            Action:    "end",
             Timestamp: time.Now().UnixNano() / int64(time.Millisecond),
         }
         handleGameAction(gameEndedAction, currentGameState.GameID)
 
         hub.broadcast <- []byte("'SERVER' - Game ended!")
-        saveGameSessionToMongoDB(gameID)
+        realGameID, session := saveGameSessionToMongoDB(gameID)
+        saveGameDataToPostgres(realGameID, session)
         currentGameState.GameID = "" // Reset placeholder ID
+        currentGameState.Players = make(map[string]*models.PlayerState) // Reset players
+        currentGameState.Started = false // Reset game state
     } else {
         log.Println("Not all players dead yet.")
     }
