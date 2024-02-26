@@ -18,8 +18,6 @@ func startGame() {
         }
     }
 
-    log.Printf("readyPlayers: %d", readyPlayers)
-
     if readyPlayers >= 2 && !currentGameState.Started && checkAllPlayersReady() {
         log.Printf("Starting game with %d players", readyPlayers)
         GameID := startNewGameSession()
@@ -33,8 +31,12 @@ func startGame() {
         }
         handleGameAction(gameStartedAction, currentGameState.GameID)
         hub.broadcast <- []byte("'SERVER' - Game started!")
+    } else if readyPlayers < 2 {
+        log.Println("Not enough players to start game")
+    } else if currentGameState.Started {
+        log.Println("Game already started")
     } else {
-        log.Println("Not all players ready yet or game already started or not enough players ready yet.")
+        log.Println("Not all players are ready")
     }
 }
 
