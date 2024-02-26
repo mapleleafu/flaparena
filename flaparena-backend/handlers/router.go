@@ -18,6 +18,7 @@ func NewRouter() *mux.Router {
     secured := r.PathPrefix("/api").Subrouter()
     secured.Use(middleware.JWTValidationMiddleware)
     secured.HandleFunc("/games", FetchUserGames).Methods("GET")
+    secured.HandleFunc("/game/{gameID}", FetchGameActions).Methods("GET")
 	secured.HandleFunc("/logout", Logout).Methods("POST")
     return r
 }
