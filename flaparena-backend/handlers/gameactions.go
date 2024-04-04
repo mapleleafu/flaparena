@@ -1,7 +1,6 @@
 package handlers
 
 import (
-	"fmt"
 	"log"
 	"strconv"
 	"encoding/json"
@@ -24,105 +23,18 @@ func processMessage(c *Connection, rawMessage []byte) {
     }
 
     switch gameAction.Action {
-    case "ready":
-        handleReadyAction(gameAction)
-    case "flap":
-        handleFlapAction(gameAction)
-    case "score":
-        handleScoreAction(gameAction)
-    case "dead":
-        handleDeadAction(gameAction)
-    default:
-        log.Printf("Unhandled game action: %s", gameAction.Action)
-    }
-}
-
-func handleReadyAction(action models.GameAction) {
-    currentGameState.Mutex.Lock()
-    defer currentGameState.Mutex.Unlock()
-
-    if !currentGameState.Started {
-        if _, exists := currentGameState.Players[action.UserID]; !exists {
-            currentGameState.Players[action.UserID] = &models.PlayerState{
-                UserID:   action.UserID,
-                Ready:    true,
-                Alive:    true,
-                Score:    0,
-            }
-            hub.broadcast <- []byte(fmt.Sprintf("'SERVER' - Player %s readied up.", action.UserID))
-            startGame()
-            log.Printf("Player %s is ready", action.UserID)
-        } else {
-            hub.broadcast <- []byte(fmt.Sprintf("'SERVER' - You already readied up UserID: %s", action.UserID))
-        }
-    } else {
-        hub.broadcast <- []byte(fmt.Sprintf("'SERVER' - Game already started UserID: %s", action.UserID))
-    }
-}
-
-func handleFlapAction(action models.GameAction) {
-    currentGameState.Mutex.Lock()
-    defer currentGameState.Mutex.Unlock()
-
-    if currentGameState.Started {
-        if _, exists := currentGameState.Players[action.UserID]; exists {
-            broadcastAction := fmt.Sprintf("'SERVER' - Player %s flapped.", action.UserID)
-            hub.broadcast <- []byte(broadcastAction)
-            handleGameAction(action, currentGameState.GameID)
-            log.Printf("Player %s flapped", action.UserID)
-        } else {
-            message := fmt.Sprintf("'SERVER' - Player not found. Ready up UserID: %s", action.UserID)
-            hub.broadcast <- []byte(message)
-        }
-    } else {
-        message := fmt.Sprintf("'SERVER' - Game not started UserID: %s", action.UserID)
-        hub.broadcast <- []byte(message)
-    }
-}
-
-func handleScoreAction(action models.GameAction) {
-    if currentGameState.Started {
-        if _, exists := currentGameState.Players[action.UserID]; exists {
-            playerScored(action.UserID)
-            handleGameAction(action, currentGameState.GameID)
-            log.Printf("Player %s scored", action.UserID)
-        } else {
-            hub.broadcast <- []byte(fmt.Sprintf("'SERVER' - Player not found. Ready up UserID: %s", action.UserID))
-        }
-    } else {
-        hub.broadcast <- []byte(fmt.Sprintf("'SERVER' - Game not started UserID: %s", action.UserID))
-    }
-}
-
-func handleDeadAction(action models.GameAction) {
-    currentGameState.Mutex.Lock()
-    defer currentGameState.Mutex.Unlock()
-
-    if currentGameState.Started {
-        if player, exists := currentGameState.Players[action.UserID]; exists {
-            player.Alive = false
-            log.Printf("Player %s is dead", action.UserID)
-
-            broadcastAction := fmt.Sprintf("'SERVER' - Player %s is dead.", action.UserID)
-            hub.broadcast <- []byte(broadcastAction)
-
-            handleGameAction(action, currentGameState.GameID)
-
-            // Check if all players are dead and end the game if so
-            if checkAllPlayersDead() {
-                endGame()
-            } else {
-                log.Printf("Not all players dead yet.")
-            }
-        } else {
-            // Player not found
-            missingPlayerMessage := fmt.Sprintf("'SERVER' - Player not found. Ready up UserID: %s", action.UserID)
-            hub.broadcast <- []byte(missingPlayerMessage)
-        }
-    } else {
-        // Game not started
-        gameNotStartedMessage := fmt.Sprintf("'SERVER' - Game not started UserID: %s", action.UserID)
-        hub.broadcast <- []byte(gameNotStartedMessage)
+        case "ready":
+            handleReadyAction(gameAction)
+        case "flap":
+            handleFlapAction(gameAction)
+        case "score":
+            handleScoreAction(gameAction)
+        case "dead":
+            handleDeadAction(gameAction)
+        case "info":
+            broadcastLobbyInfo()
+        default:
+            log.Printf("Unhandled game action: %s", gameAction.Action)
     }
 }
 
@@ -138,4 +50,90 @@ func handleGameAction(action models.GameAction, gameID string) {
 
     // Add the action to the session.
     gameSessions[gameID].Actions = append(gameSessions[gameID].Actions, action)
+}
+
+func broadcastMessage(messageType string, data interface{}) {
+    message, err := json.Marshal(struct {
+        Type string      `json:"type"`
+        Data interface{} `json:"data"`
+    }{
+        Type: messageType,
+        Data: data,
+    })
+    if err != nil {
+        log.Printf("Error marshalling broadcast message: %v", err)
+        return
+    }
+    hub.broadcast <- message
+}
+
+func handleReadyAction(action models.GameAction) {
+    currentGameState.Mutex.Lock()
+    defer currentGameState.Mutex.Unlock()
+
+    if !currentGameState.Started {
+        if _, exists := currentGameState.Players[action.UserID]; !exists {
+            currentGameState.Players[action.UserID] = &models.PlayerState{
+                UserID:   action.UserID,
+                Ready:    true,
+                Alive:    true,
+                Score:    0,
+            }
+            broadcastMessage("playerReady", map[string]string{"userID": action.UserID})
+            startGame()
+            log.Printf("Player %s is ready", action.UserID)
+        } else {
+            broadcastMessage("playerAlreadyReady", map[string]string{"userID": action.UserID})
+        }
+    } else {
+        broadcastMessage("gameAlreadyStarted", map[string]string{"userID": action.UserID})
+    }
+}
+
+func handleFlapAction(action models.GameAction) {
+    if currentGameState.Started {
+        if _, exists := currentGameState.Players[action.UserID]; exists {
+            broadcastMessage("playerAction", map[string]interface{}{"action": "flap", "userID": action.UserID})
+            handleGameAction(action, currentGameState.GameID)
+            log.Printf("Player %s flapped", action.UserID)
+        } else {
+            broadcastMessage("playerNotFound", map[string]string{"userID": action.UserID})
+        }
+    } else {
+        broadcastMessage("gameNotStarted", map[string]string{"userID": action.UserID})
+    }
+}
+
+func handleScoreAction(action models.GameAction) {
+    if currentGameState.Started {
+        if _, exists := currentGameState.Players[action.UserID]; exists {
+            playerScored(action.UserID)
+            broadcastMessage("playerScored", map[string]interface{}{"userID": action.UserID})
+            handleGameAction(action, currentGameState.GameID)
+            log.Printf("Player %s scored", action.UserID)
+        } else {
+            broadcastMessage("playerNotFound", map[string]string{"userID": action.UserID})
+        }
+    } else {
+        broadcastMessage("gameNotStarted", map[string]string{"userID": action.UserID})
+    }
+}
+
+func handleDeadAction(action models.GameAction) {
+    if currentGameState.Started {
+        if player, exists := currentGameState.Players[action.UserID]; exists {
+            player.Alive = false
+            broadcastMessage("playerDeath", map[string]string{"userID": action.UserID})
+            handleGameAction(action, currentGameState.GameID)
+            log.Printf("Player %s is dead", action.UserID)
+
+            if checkAllPlayersDead() {
+                endGame()
+            }
+        } else {
+            broadcastMessage("playerNotFound", map[string]string{"userID": action.UserID})
+        }
+    } else {
+        broadcastMessage("gameNotStarted", map[string]string{"userID": action.UserID})
+    }
 }

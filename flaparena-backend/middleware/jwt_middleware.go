@@ -1,14 +1,15 @@
 package middleware
 
 import (
-    "context"
-    "net/http"
-    "strings"
+	"context"
+	"net/http"
+	"strings"
 
-    "github.com/golang-jwt/jwt/v4"
-    "github.com/mapleleafu/flaparena/flaparena-backend/models"
-    "github.com/mapleleafu/flaparena/flaparena-backend/utils"
-    "github.com/mapleleafu/flaparena/flaparena-backend/responses"
+	"github.com/golang-jwt/jwt/v4"
+	"github.com/mapleleafu/flaparena/flaparena-backend/common"
+	"github.com/mapleleafu/flaparena/flaparena-backend/models"
+	"github.com/mapleleafu/flaparena/flaparena-backend/responses"
+	"github.com/mapleleafu/flaparena/flaparena-backend/utils"
 )
 
 func JWTValidationMiddleware(next http.Handler) http.Handler {
@@ -25,7 +26,7 @@ func JWTValidationMiddleware(next http.Handler) http.Handler {
 
         token, err := jwt.ParseWithClaims(tokenStr, &models.CustomClaims{}, keyFunc)
         if err != nil || !token.Valid {
-            utils.HandleError(w, responses.UnauthorizedError{Msg: "You are not authorized to access this resource."})
+            utils.HandleError(w, responses.UnauthorizedError{Msg: "Your token is invalid or expired. Please log in again."})
             return
         }
 
@@ -36,7 +37,7 @@ func JWTValidationMiddleware(next http.Handler) http.Handler {
         }
 
         // Store the claims in the context
-        ctx := context.WithValue(r.Context(), "authInfo", authInfo)
+        ctx := context.WithValue(r.Context(), common.AuthInfoKey, authInfo)
         next.ServeHTTP(w, r.WithContext(ctx))
     })
 }

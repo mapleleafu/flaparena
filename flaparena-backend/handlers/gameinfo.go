@@ -10,6 +10,7 @@ import (
     "go.mongodb.org/mongo-driver/mongo"
     "go.mongodb.org/mongo-driver/bson"
 	"github.com/lib/pq"
+    "github.com/mapleleafu/flaparena/flaparena-backend/common"
 	"github.com/mapleleafu/flaparena/flaparena-backend/models"
 	"github.com/mapleleafu/flaparena/flaparena-backend/repository"
 	"github.com/mapleleafu/flaparena/flaparena-backend/responses"
@@ -17,7 +18,7 @@ import (
 )
 
 func FetchUserGames(w http.ResponseWriter, r *http.Request) {
-    authInfo, ok := r.Context().Value("authInfo").(*models.CustomClaims)
+    authInfo, ok := r.Context().Value(common.AuthInfoKey).(*models.CustomClaims)
     if !ok {
         utils.HandleError(w, responses.InternalServerError{Msg: "Error processing request."})
         return
@@ -27,7 +28,7 @@ func FetchUserGames(w http.ResponseWriter, r *http.Request) {
     db := repository.PostgreSQLDB
 
     var games []models.Game
-    query := "SELECT id, created_at, finished_at, user_ids FROM games WHERE $1 = ANY(user_ids)"
+    query := "SELECT id, created_at, finished_at, user_ids FROM games WHERE $1 = ANY(user_ids) ORDER BY created_at DESC"
     rows, err := db.Query(query, userID)
 
     if err != nil {
@@ -62,7 +63,7 @@ func FetchUserGames(w http.ResponseWriter, r *http.Request) {
 }
 
 func FetchGameActions(w http.ResponseWriter, r *http.Request) {
-    authInfo, ok := r.Context().Value("authInfo").(*models.CustomClaims)
+    authInfo, ok := r.Context().Value(common.AuthInfoKey).(*models.CustomClaims)
     if !ok {
         utils.HandleError(w, responses.InternalServerError{Msg: "Error processing request."})
         return

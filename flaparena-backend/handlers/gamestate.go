@@ -2,11 +2,10 @@ package handlers
 
 import (
 	"log"
-	"time"
+    "time"
 
 	"github.com/mapleleafu/flaparena/flaparena-backend/models"
 )
-
 
 func startGame() {
     readyPlayers := 0
@@ -19,24 +18,27 @@ func startGame() {
     }
 
     if readyPlayers >= 2 && !currentGameState.Started && checkAllPlayersReady() {
-        log.Printf("Starting game with %d players", readyPlayers)
         GameID := startNewGameSession()
         currentGameState.GameID = GameID
         currentGameState.Started = true
-        log.Println("Game started")
+
         gameStartedAction := models.GameAction{
             UserID:    "server",
             Action:    "start",
             Timestamp: time.Now().UnixNano() / int64(time.Millisecond),
         }
         handleGameAction(gameStartedAction, currentGameState.GameID)
-        hub.broadcast <- []byte("'SERVER' - Game started!")
+
+        log.Println("Game started")
+        broadcastMessage("gameStart", map[string]interface{}{
+            "gameID": GameID,
+        })
     } else if readyPlayers < 2 {
-        log.Println("Not enough players to start game")
+        log.Println("Not enough players to start the game.")
     } else if currentGameState.Started {
-        log.Println("Game already started")
+        log.Println("Game already started.")
     } else {
-        log.Println("Not all players are ready")
+        log.Println("Not all players are ready.")
     }
 }
 
@@ -52,15 +54,21 @@ func endGame() {
         }
         handleGameAction(gameEndedAction, currentGameState.GameID)
 
-        hub.broadcast <- []byte("'SERVER' - Game ended!")
+        broadcastMessage("gameEnd", map[string]interface{}{
+            "gameID": gameID,
+        })
         realGameID, session := saveGameSessionToMongoDB(gameID)
         saveGameDataToPostgres(realGameID, session)
-        currentGameState.GameID = "" // Reset placeholder ID
-        currentGameState.Players = make(map[string]*models.PlayerState) // Reset players
-        currentGameState.Started = false // Reset game state
+        resetGameState()
     } else {
         log.Println("Not all players dead yet.")
     }
+}
+
+func resetGameState() {
+    currentGameState.GameID = "" // Reset placeholder ID
+    currentGameState.Players = make(map[string]*models.PlayerState) // Reset players
+    currentGameState.Started = false // Reset game state
 }
 
 func checkAllPlayersReady() bool {
