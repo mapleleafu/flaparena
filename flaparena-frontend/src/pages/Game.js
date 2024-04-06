@@ -57,7 +57,7 @@ const Game = () => {
                 pipePair.draw(ctx);
                 pipePair.update();
                 if (checkCollision(birdPositionRef.current, Bird.image, pipePair, pipeImage)) {
-                    wsRef.current.send(JSON.stringify({ action: "dead", timestamp: Date.now() }));
+                    // wsRef.current.send(JSON.stringify({ action: "dead", timestamp: Date.now() }));
                 }
             });
 
