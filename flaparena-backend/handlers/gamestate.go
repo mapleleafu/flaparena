@@ -9,18 +9,19 @@ import (
 
 func startGame() {
     readyPlayers := 0
+
     for _, player := range currentGameState.Players {
         if player.Ready && readyPlayers <= 20 {
             readyPlayers++
-        } else {
-            log.Printf("Max is 20 players, %d players are ready", readyPlayers)
         }
     }
 
     if readyPlayers >= 2 && !currentGameState.Started && checkAllPlayersReady() {
         GameID := startNewGameSession()
+        currentGameState.Mutex.Lock()
         currentGameState.GameID = GameID
         currentGameState.Started = true
+        currentGameState.Mutex.Unlock()
 
         gameStartedAction := models.GameAction{
             UserID:    "server",
@@ -72,8 +73,10 @@ func resetGameState() {
 }
 
 func checkAllPlayersReady() bool {
+    currentGameState.Mutex.Lock()
+    defer currentGameState.Mutex.Unlock()
+
     for _, player := range currentGameState.Players {
-        log.Print(player)
         if !player.Ready {
             return false
         }

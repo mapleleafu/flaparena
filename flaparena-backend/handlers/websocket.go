@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+    "encoding/json"
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
@@ -29,10 +30,6 @@ var currentGameState = &models.GameState{
     Started: false,
     Mutex:   sync.Mutex{},
     GameID: "",
-}
-
-var currentLobby *models.Lobby = &models.Lobby{
-    Connections: make(map[string]*models.ConnectionInfo),
 }
 
 func WsHandler(w http.ResponseWriter, r *http.Request) {
@@ -61,39 +58,39 @@ func WsHandler(w http.ResponseWriter, r *http.Request) {
     }
     defer conn.Close()
 
-    connection := &Connection{send: make(chan []byte, 256), ws: conn, userID: userID}
+    connection := &Connection{send: make(chan []byte, 256), ws: conn, userID: userID, username: claims.Username}
 
     // Register the connection to the hub for broadcasting and message handling
     hub.register <- connection
 
-    // Convert ID back to uint64
-    userID, err = strconv.ParseUint(claims.ID, 10, 64)
-    if err != nil {
-        log.Println(err)
-        return
-    }
     // Convert userID to string for map index
     userIDStr := strconv.FormatUint(userID, 10)
 
-    // Update lobby information with this new connection
-    currentLobby.Connections[userIDStr] = &models.ConnectionInfo{
-        UserID:    userIDStr,
-        Username:  claims.Username,
+    // Update the player's state in currentGameState
+    currentGameState.Mutex.Lock()
+    currentGameState.Players[userIDStr] = &models.PlayerState{
+        UserID:   userIDStr,
+        Username: claims.Username,
         Connected: true,
-        Ready:     false,
+        Ready:    false,
+        Alive:    false,
+        Score:    0,
     }
+    currentGameState.Mutex.Unlock()
 
-    // Broadcast updated lobby info to all connections
-    broadcastLobbyInfo()
+    log.Printf("User %s connected", userIDStr)
+
+    // Broadcast updated game state to all connections
+    broadcastGameState()
 
     // Setup clean up for when the connection is closed
     defer func() { 
         hub.unregister <- connection
-        // Also mark this user as disconnected in the lobby
-        if connInfo, exists := currentLobby.Connections[userIDStr]; exists {
-            connInfo.Connected = false
-            broadcastLobbyInfo()
-        }
+        // Remove the player from the game state
+        currentGameState.Mutex.Lock()
+        delete(currentGameState.Players, userIDStr)
+        currentGameState.Mutex.Unlock()
+        broadcastGameState()
     }()
 
     go connection.writePump()
@@ -133,24 +130,25 @@ func (c *Connection) writePump() {
     }
 }
 
-func broadcastLobbyInfo() {
-    currentLobby.Mutex.Lock()
-    defer currentLobby.Mutex.Unlock()
+func broadcastGameState() {
+    currentGameState.Mutex.Lock()
+    defer currentGameState.Mutex.Unlock()
 
-    // Create a slice to hold information about each connection
-    lobbyInfo := []models.LobbyInfo{}
-
-    // Iterate over the connections to build a message about each user's status
-    for _, connInfo := range currentLobby.Connections {
-        userStatus := models.LobbyInfo{
-            UserID:    connInfo.UserID,
-            Username:  connInfo.Username,
-            Connected: connInfo.Connected,
-            Ready:     connInfo.Ready,
-        }
-        lobbyInfo = append(lobbyInfo, userStatus)
+    gameState := make([]map[string]interface{}, 0)
+    for _, player := range currentGameState.Players {
+        gameState = append(gameState, map[string]interface{}{
+            "userID":   player.UserID,
+            "username": player.Username,
+            "connected": player.Connected,
+            "ready":    player.Ready,
+            "alive":    player.Alive,
+            "score":    player.Score,
+        })
     }
 
-    // Broadcast the lobby information to all connections
-    broadcastMessage("lobbyState", lobbyInfo)
+    message, _ := json.Marshal(map[string]interface{}{
+        "type": "gameState",
+        "data": gameState,
+    })
+    hub.broadcast <- message
 }

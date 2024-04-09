@@ -7,7 +7,7 @@ import (
 
 func NewRouter() *mux.Router {
     r := mux.NewRouter()
-
+    
     // Public routes
     r.HandleFunc("/api/register", Register).Methods("POST")
     r.HandleFunc("/api/login", Login).Methods("POST")

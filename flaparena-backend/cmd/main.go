@@ -7,6 +7,7 @@ import (
     "github.com/joho/godotenv"
     "github.com/mapleleafu/flaparena/flaparena-backend/config"
     "github.com/mapleleafu/flaparena/flaparena-backend/handlers"
+    "github.com/mapleleafu/flaparena/flaparena-backend/middleware"
     "github.com/mapleleafu/flaparena/flaparena-backend/repository"
 )
 
@@ -19,7 +20,8 @@ func main() {
     repository.ConnectMongoDB()
 
     r := handlers.NewRouter()
+    corsHandler := middleware.CORSMiddleware(r)
 
     log.Println("Server running on http://localhost:8000")
-    http.ListenAndServe(":8000", r)
+    http.ListenAndServe(":8000", corsHandler)
 }

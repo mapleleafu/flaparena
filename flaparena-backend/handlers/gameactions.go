@@ -32,7 +32,7 @@ func processMessage(c *Connection, rawMessage []byte) {
         case "dead":
             handleDeadAction(gameAction)
         case "info":
-            broadcastLobbyInfo()
+            broadcastGameState()
         default:
             log.Printf("Unhandled game action: %s", gameAction.Action)
     }
@@ -65,23 +65,37 @@ func broadcastMessage(messageType string, data interface{}) {
         return
     }
     hub.broadcast <- message
+    log.Printf("Broadcasted message: %s", message)
 }
 
 func handleReadyAction(action models.GameAction) {
     currentGameState.Mutex.Lock()
     defer currentGameState.Mutex.Unlock()
 
+    playerState, exists := currentGameState.Players[action.UserID]
+    log.Printf("currentGameState.Players: %v", playerState)
+
     if !currentGameState.Started {
-        if _, exists := currentGameState.Players[action.UserID]; !exists {
+        if exists && !playerState.Ready {
+            // Update the player's ready state
+            playerState.Ready = true
+            playerState.Alive = true
+
+            log.Printf("Player %s is ready", action.UserID)
+            broadcastMessage("playerReady", map[string]string{"userID": action.UserID})
+            startGame()
+        } else if !exists {
+            // Create a new player state
             currentGameState.Players[action.UserID] = &models.PlayerState{
                 UserID:   action.UserID,
                 Ready:    true,
                 Alive:    true,
                 Score:    0,
             }
+
+            log.Printf("Player %s is ready", action.UserID)
             broadcastMessage("playerReady", map[string]string{"userID": action.UserID})
             startGame()
-            log.Printf("Player %s is ready", action.UserID)
         } else {
             broadcastMessage("playerAlreadyReady", map[string]string{"userID": action.UserID})
         }

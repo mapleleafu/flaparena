@@ -5,10 +5,12 @@ import (
 )
 
 type PlayerState struct {
-    UserID   string
-    Ready    bool
-    Alive    bool
-    Score    int
+    UserID string
+    Username string
+    Connected bool
+    Ready bool
+    Alive bool
+    Score int
 }
 
 type GameState struct {

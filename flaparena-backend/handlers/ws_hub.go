@@ -9,6 +9,7 @@ type Connection struct {
     ws       *websocket.Conn
     send     chan []byte
     userID   uint64
+    username string
 }
 
 // Hub maintains the set of active connections and broadcasts messages to the connections.
