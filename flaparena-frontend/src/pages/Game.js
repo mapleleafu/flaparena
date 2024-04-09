@@ -13,21 +13,7 @@ const Game = () => {
     const jumpStrength = -10;
     const gapBetweenPipes = 450;
     const gapBetweenTopBottomPipe = 250;
-    const wsRef = useRef(null);
 
-    wsRef.current = new WebSocket("ws://localhost:8000/ws/eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3MTI0MDg5NzksImlkIjoiOSIsInVzZXJuYW1lIjoidGVzdCJ9.H9QpzfFJXpOuzlz7pT-pc75cezBl9xDHCtdIoiRyqOU");
-
-    wsRef.current.onopen = () => {
-        console.log("Connected");
-        wsRef.current.send(JSON.stringify({ action: "ready", timestamp: Date.now() }));
-    };
-    
-    wsRef.current.onmessage = event => console.log("Received message: " + event.data);
-    
-    wsRef.current.onerror = error => console.log("WebSocket Error: " + error);
-    
-    wsRef.current.onclose = event => console.log("Disconnected", event.code, event.reason);
-    
     useEffect(() => {
         // Load pipe images inside useEffect to ensure they're loaded after component mounts
         const pipeImage = new Image();
@@ -98,9 +84,9 @@ const Game = () => {
             window.addEventListener('keydown', handleKeyDown);
 
             return () => {
-            if (wsRef.current) {
-                wsRef.current.close();
-                }
+            // if (wsRef.current) {
+            //     wsRef.current.close();
+            //     }
                 
                 clearInterval(gameLoop);
                 window.removeEventListener('keydown', handleKeyDown);

@@ -1,90 +1,177 @@
 import React, { useState, useEffect, useRef } from 'react';
 import backgroundImageSrc from '../assets/images/background.png';
 
+const BASEURL = "localhost:8000";
+
 const Lobby = () => {
-	const [users, setUsers] = useState([]); // Holds the list of users and their ready status
-	const wsRef = useRef(null);
-	const accessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJleHAiOjE3MTI2ODkyNDksImlkIjoiMCIsInVzZXJuYW1lIjoiYWRtaW4ifQ.QNlKN9gW1CN5tC9g79Iwo8-TcPRnNFS51CTwuNwxKL8';
+    const [users, setUsers] = useState([]);
+    const [isLoggedIn, setIsLoggedIn] = useState(false);
+    const wsRef = useRef(null);
 
-	useEffect(() => {
-		wsRef.current = new WebSocket(`ws://localhost:8000/ws/${accessToken}`);
+    const handleLoginSubmit = async (event) => {
+        event.preventDefault();
 
-		wsRef.current.onopen = () => {
-			console.log("Connected to the lobby");
-	};
+        // Extract form data
+        const formData = new FormData(event.target);
+        const username = formData.get('username');
+        const password = formData.get('password');
 
-    wsRef.current.onmessage = (event) => {
-		const message = JSON.parse(event.data);
-		switch (message.type) {
-		  case 'lobbyState':
-			console.log(message);
-			setUsers(message.data.map(user => ({
-			  id: user.userID,
-			  username: user.username,
-			  connected: user.connected,
-			  ready: user.ready
-			})));
-			break;
-		  default:
-			console.log("Received message: ", message);
-		}
-	  };
+        try {
+            const response = await apiCall(`http://${BASEURL}/api/login`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ username, password }),
+                credentials: 'include'
+            });
+            if (response.success === true) {
+                const accessToken = response.data.access_token;
+                localStorage.setItem('access_token', accessToken);
+                setIsLoggedIn(true);
+                setupWebSocket(accessToken);
+            } else {
+                console.error(response.message);
+            }
+        } catch (error) {
+            console.error(error.message);
+        }
+    };
 
-	wsRef.current.onerror = (error) => {
-		console.log("WebSocket Error: ", error);
-	};
+    const attemptLoginOrRefresh = async () => {
+        let accessToken = localStorage.getItem('access_token');
+    
+        // Try to get the refresh token from cookies
+        const refreshTokenCookie = document.cookie.split('; ').find(row => row.startsWith('refresh_token='));
+        const refreshToken = refreshTokenCookie ? refreshTokenCookie.split('=')[1] : null;
+    
+        if (!accessToken && refreshToken) {
+            // If there's a refresh token but no access token, try to refresh it
+            try {
+                const response = await fetch(`${BASEURL}/refresh/token`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    }
+                });
+    
+                if (!response.ok) throw new Error("Refresh token invalid");
+    
+                accessToken = response.data.access_token;
+    
+                // Save the new access token to local storage
+                localStorage.setItem('access_token', accessToken);
+                setIsLoggedIn(true);
+                return accessToken;
+    
+            } catch (error) {
+                console.error("Login or token refresh failed:", error);
+                setIsLoggedIn(false);
+            }
+        } else if (!accessToken) {
+            // Handle the case where there's neither an access token nor a refresh token
+            console.log("Please log in");
+            setIsLoggedIn(false);
+        } else {
+            // Access token is available
+            setIsLoggedIn(true);
+            return accessToken;
+        }
+    };
 
-	wsRef.current.onclose = (event) => {
-		console.log("Disconnected from the lobby", event.code, event.reason);
-	};
+    useEffect(() => {
+        (async () => {
+            const accessToken = await attemptLoginOrRefresh();
+            if (accessToken !== undefined) {
+                setupWebSocket(accessToken);
+            }
+        })();
+    }, []);
 
-	
-    return () => {
-		// Clean up the WebSocket connection when the component unmounts
-		if (wsRef.current) {
-		  wsRef.current.close();
-		}
-	};
-	}, []);
+    const setupWebSocket = (accessToken) => {
+        console.log("Trying to set up WebSocket");
+        wsRef.current = new WebSocket(`ws://${BASEURL}/ws/${accessToken}`);
 
-	const handleReadyClick = () => {
-		sendReady();
-	};
+        wsRef.current.onopen = () => {
+            console.log("Connected to the lobby");
+        };
 
-	// Send ready message when the current user marks themselves as ready
-	const sendReady = () => {
-		const message = JSON.stringify({ action: "ready", timestamp: Date.now() });
-		wsRef.current.send(message);
-		wsRef.current.onmessage = (event) => {
-			const message = JSON.parse(event.data);
-			switch (message.type) {
-			  case 'playerReady':
-				console.log("Player is ready");
-				users.find(user => user.username === 'admin').ready = true;
-				setUsers([...users]);
-				break;
-			  case 'playerAlreadyReady':
-				console.log("Player is already ready");
-				break;
-			  default:
-				console.log("Received message: ", message);
-			}
-		  }
-	};
-	
-	return (
-		<div style={{ backgroundImage: `url(${backgroundImageSrc})`, height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
-		  <h1>Lobby</h1>
-		  <ul>
-			{users.map((user) => (
-			  <li key={user.id}>
-				{user.username} - {user.connected ? 'Connected' : 'Disconnected'} - {user.ready ? 'Ready' : 'Not Ready'}
-			  </li>
-			))}
-		  </ul>
-			<button onClick={handleReadyClick}>I'm Ready</button>
-		</div>
-	  );
-	};
-	
+        wsRef.current.onmessage = (event) => {
+            const message = JSON.parse(event.data);
+            switch (message.type) {
+                case 'gameState':
+                    console.log(message);
+                    setUsers(message.data.map(user => ({
+                        id: user.userID,
+                        username: user.username,
+                        connected: user.connected,
+                        ready: user.ready
+                    })));
+                    break;
+                default:
+                    console.log("Received message: ", message);
+            }
+        };
+
+        wsRef.current.onerror = (error) => {
+            console.log("WebSocket Error: ", error);
+        };
+
+        wsRef.current.onclose = (event) => {
+            console.log("Disconnected from the lobby", event.code, event.reason);
+        };
+    };
+
+    const sendReady = () => {
+        const message = JSON.stringify({ action: "ready", timestamp: Date.now() });
+        wsRef.current?.send(message);
+
+        // Update the local state immediately
+        setUsers(users.map(user => ({
+            ...user,
+            ready: true
+        })));
+    };
+
+    const lobbyInfo = () => {
+        const message = JSON.stringify({ action: "info", timestamp: Date.now() });
+        wsRef.current?.send(message);
+    }
+
+    if (!isLoggedIn) {
+        return (
+            <div style={{ backgroundImage: `url(${backgroundImageSrc})`, height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+                <h1>Log in to play</h1>
+                <form onSubmit={handleLoginSubmit}>
+                    <label htmlFor="username">Username:</label>
+                    <input type="text" id="username" name="username" required />
+                    <label htmlFor="password">Password:</label>
+                    <input type="password" id="password" name="password" required />
+                    <button type="submit">Log in</button>
+                </form>
+            </div>
+        );
+    }
+
+    return (
+        <div style={{ backgroundImage: `url(${backgroundImageSrc})`, height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center' }}>
+            <h1>Lobby</h1>
+            <ul>
+                {users.map((user) => (
+                    <li key={user.id}>
+                        {user.username} - {user.connected ? 'Connected' : 'Disconnected'} - {user.ready ? 'Ready' : 'Not Ready'}
+                    </li>
+                ))}
+            </ul>
+            <button onClick={sendReady}>I'm Ready</button>
+            <button onClick={lobbyInfo}>Lobby Info</button>
+        </div>
+    );
+};
+
+async function apiCall(url, options) {
+    const response = await fetch(url, options);
+    const data = await response.json();
+    if (!response.ok) throw new Error(data.message || 'An error occurred');
+    return data;
+}
+
 export default Lobby;
