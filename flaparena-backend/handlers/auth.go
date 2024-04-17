@@ -125,7 +125,7 @@ func Login(w http.ResponseWriter, r *http.Request) {
         Value:    refreshToken,
         Path:     "/",
         Expires:  time.Now().Add(24 * time.Hour * 180),
-        HttpOnly: true,
+        HttpOnly: false,
         Secure:   true,
         SameSite: http.SameSiteStrictMode,
     }
@@ -173,6 +173,7 @@ func Logout(w http.ResponseWriter, r *http.Request) {
 func RefreshToken(w http.ResponseWriter, r *http.Request) {
     refreshTokenCookie, err := r.Cookie("refresh_token")
     if err != nil {
+        log.Println(err)
         utils.HandleError(w, responses.UnauthorizedError{Msg: "No refresh token found."})
         return
     }
@@ -193,10 +194,10 @@ func RefreshToken(w http.ResponseWriter, r *http.Request) {
     }
 
     var user models.User
-    err = db.QueryRow("SELECT username FROM users WHERE id = $1", userID).Scan(&user.Username)
+    err = db.QueryRow("SELECT id, username FROM users WHERE id = $1", userID).Scan(&user.ID, &user.Username)
     if err != nil {
         log.Println(err)
-        utils.HandleError(w, responses.InternalServerError{Msg: "An error occurred while processing your request."})
+        utils.HandleError(w, responses.InternalServerError{Msg: "Failed to fetch user details."})
         return
     }
 
@@ -204,14 +205,16 @@ func RefreshToken(w http.ResponseWriter, r *http.Request) {
         RegisteredClaims: jwt.RegisteredClaims{
             ExpiresAt: jwt.NewNumericDate(time.Now().Add(time.Hour * 72)),
         },
-        ID:       strconv.Itoa(int(user.ID)), // Convert ID to string
+        ID:       strconv.Itoa(int(user.ID)),
         Username: user.Username,
     }
+
     
     token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 
     tokenString, err := token.SignedString([]byte(os.Getenv("JWT_SECRET")))
     if err != nil {
+        log.Println(err)
         utils.HandleError(w, responses.InternalServerError{Msg: "Failed to generate token."})
         return
     }

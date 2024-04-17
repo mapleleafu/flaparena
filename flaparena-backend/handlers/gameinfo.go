@@ -43,6 +43,7 @@ func FetchUserGames(w http.ResponseWriter, r *http.Request) {
         err := rows.Scan(&game.ID, &game.CreatedAt, &game.FinishedAt, pq.Array(&game.UserIDs))
         if err != nil {
             utils.HandleError(w, responses.InternalServerError{Msg: "Error processing user games."})
+            return
         }
         games = append(games, game)
     }

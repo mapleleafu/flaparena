@@ -17,11 +17,23 @@ func startGame() {
     }
 
     if readyPlayers >= 2 && !currentGameState.Started && checkAllPlayersReady() {
-        GameID := startNewGameSession()
+        // Broadcast countdown before starting the game
+        for countdown := 5; countdown > 0; countdown-- {
+            broadcastMessage("countdown", map[string]interface{}{
+                "countdown": countdown,
+            })
+            log.Printf("Starting game in %d...", countdown)
+            time.Sleep(1 * time.Second) // Wait for a second
+        }
+        
+        GameID := startNewGameSession()  // Placeholder ID generated here
+        
         currentGameState.Mutex.Lock()
         currentGameState.GameID = GameID
         currentGameState.Started = true
         currentGameState.Mutex.Unlock()
+
+        createInitialGameInPostgres(GameID)
 
         gameStartedAction := models.GameAction{
             UserID:    "server",
@@ -34,6 +46,7 @@ func startGame() {
         broadcastMessage("gameStart", map[string]interface{}{
             "gameID": GameID,
         })
+        
     } else if readyPlayers < 2 {
         log.Println("Not enough players to start the game.")
     } else if currentGameState.Started {
@@ -42,6 +55,7 @@ func startGame() {
         log.Println("Not all players are ready.")
     }
 }
+
 
 func endGame() {
     if checkAllPlayersDead() {
@@ -58,8 +72,10 @@ func endGame() {
         broadcastMessage("gameEnd", map[string]interface{}{
             "gameID": gameID,
         })
-        realGameID, session := saveGameSessionToMongoDB(gameID)
-        saveGameDataToPostgres(realGameID, session)
+
+        realGameID, _ := saveGameSessionToMongoDB(currentGameState.GameID)
+
+        updateGameDataInPostgres(realGameID)
         resetGameState()
     } else {
         log.Println("Not all players dead yet.")

@@ -3,7 +3,7 @@ package handlers
 import (
 	"context"
 	"log"
-	"time"
+	// "time"
 
 	"github.com/google/uuid"
 	"github.com/lib/pq"
@@ -36,40 +36,63 @@ func saveGameSessionToMongoDB(placeholderID string) (string, *models.GameSession
     return realGameID, session
 }
 
-func saveGameDataToPostgres(gameID string, session *models.GameSession) {
-    var serverStart, serverEnd int64
-    
+func createInitialGameInPostgres(gameID string) {
     var userIds []string
-    
     for userID := range currentGameState.Players {
         userIds = append(userIds, userID)
     }
-
-    for _, event := range session.Actions {
-        switch event.Action {
-        case "start":
-            serverStart = event.Timestamp
-        case "end":
-            serverEnd = event.Timestamp
-        }
-    }
-
-    serverStartTime := time.UnixMilli(serverStart).UTC().Format(time.RFC3339)
-    serverEndTime := time.UnixMilli(serverEnd).UTC().Format(time.RFC3339)
-
-    db := repository.PostgreSQLDB
-    userIdsForDB := pq.Array(userIds)
-
-    // Save the game session to the PostgreSQL database
-    _, err := db.Exec("INSERT INTO games (id, created_at, finished_at, user_ids) VALUES ($1, $2, $3, $4)", 
-    gameID, serverStartTime, serverEndTime, userIdsForDB)
-    if err != nil {
-        log.Printf("Failed to insert game session into PostgreSQL: %v", err)
-        return
-    }
     
-    log.Printf("Game session saved to PostgreSQL with ID %s", gameID)
+    db := repository.PostgreSQLDB
+    _, err := db.Exec("INSERT INTO games (id, created_at, user_ids) VALUES ($1, NOW(), $2)",
+        gameID, pq.Array(userIds))
+    if err != nil {
+        log.Printf("Failed to create initial game session in PostgreSQL: %v", err)
+    }
 }
+
+func updateGameDataInPostgres(realGameID string) {
+    db := repository.PostgreSQLDB
+    _, err := db.Exec("UPDATE games SET finished_at = NOW(), id = $1 WHERE id = $2", 
+        realGameID, currentGameState.GameID)
+    if err != nil {
+        log.Printf("Failed to update game session in PostgreSQL: %v", err)
+    }
+}
+
+// func saveGameDataToPostgres(gameID string, session *models.GameSession) {
+//     var serverStart, serverEnd int64
+    
+//     var userIds []string
+    
+//     for userID := range currentGameState.Players {
+//         userIds = append(userIds, userID)
+//     }
+
+//     for _, event := range session.Actions {
+//         switch event.Action {
+//         case "start":
+//             serverStart = event.Timestamp
+//         case "end":
+//             serverEnd = event.Timestamp
+//         }
+//     }
+
+//     serverStartTime := time.UnixMilli(serverStart).UTC().Format(time.RFC3339)
+//     serverEndTime := time.UnixMilli(serverEnd).UTC().Format(time.RFC3339)
+
+//     db := repository.PostgreSQLDB
+//     userIdsForDB := pq.Array(userIds)
+
+//     // Save the game session to the PostgreSQL database
+//     _, err := db.Exec("INSERT INTO games (id, created_at, finished_at, user_ids) VALUES ($1, $2, $3, $4)", 
+//     gameID, serverStartTime, serverEndTime, userIdsForDB)
+//     if err != nil {
+//         log.Printf("Failed to insert game session into PostgreSQL: %v", err)
+//         return
+//     }
+    
+//     log.Printf("Game session saved to PostgreSQL with ID %s", gameID)
+// }
 
 func startNewGameSession() string {
     placeholderID  := generatePlaceholderID()

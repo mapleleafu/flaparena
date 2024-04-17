@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"sync"
     "encoding/json"
+    "time"
 
 	"github.com/gorilla/mux"
 	"github.com/gorilla/websocket"
@@ -99,20 +100,31 @@ func WsHandler(w http.ResponseWriter, r *http.Request) {
 
 func (c *Connection) readPump() {
     defer func() {
+        // Before unregistering, check if the game has started and mark the player as dead
+        if currentGameState.Started {
+            userIDStr := strconv.FormatUint(c.userID, 10)
+            if player, exists := currentGameState.Players[userIDStr]; exists && player.Alive {
+                deadAction := models.GameAction{
+                    UserID:    userIDStr,
+                    Action:    "dead",
+                    Timestamp: time.Now().UnixMilli(),
+                }
+                handleDeadAction(deadAction)
+            }
+        }
+        
+        // Unregister the connection and close the WebSocket
         hub.unregister <- c
         c.ws.Close()
-        }()
+        log.Printf("User %d disconnected", c.userID)
+    }()
 
     for {
         _, message, err := c.ws.ReadMessage()
         if err != nil {
-            log.Printf("error reading message: %v", err)
-			if websocket.IsUnexpectedCloseError(err, websocket.CloseGoingAway, websocket.CloseAbnormalClosure) {
-				log.Printf("error: %v", err)
-			}
+            log.Printf("Error reading message from userID %d: %v", c.userID, err)
             break
         }
-        
         processMessage(c, message)
     }
 }

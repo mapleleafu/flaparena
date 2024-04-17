@@ -65,15 +65,10 @@ func broadcastMessage(messageType string, data interface{}) {
         return
     }
     hub.broadcast <- message
-    log.Printf("Broadcasted message: %s", message)
 }
 
 func handleReadyAction(action models.GameAction) {
-    currentGameState.Mutex.Lock()
-    defer currentGameState.Mutex.Unlock()
-
     playerState, exists := currentGameState.Players[action.UserID]
-    log.Printf("currentGameState.Players: %v", playerState)
 
     if !currentGameState.Started {
         if exists && !playerState.Ready {
@@ -82,7 +77,7 @@ func handleReadyAction(action models.GameAction) {
             playerState.Alive = true
 
             log.Printf("Player %s is ready", action.UserID)
-            broadcastMessage("playerReady", map[string]string{"userID": action.UserID})
+            broadcastGameState()
             startGame()
         } else if !exists {
             // Create a new player state
@@ -94,7 +89,7 @@ func handleReadyAction(action models.GameAction) {
             }
 
             log.Printf("Player %s is ready", action.UserID)
-            broadcastMessage("playerReady", map[string]string{"userID": action.UserID})
+            broadcastGameState()
             startGame()
         } else {
             broadcastMessage("playerAlreadyReady", map[string]string{"userID": action.UserID})
@@ -106,10 +101,10 @@ func handleReadyAction(action models.GameAction) {
 
 func handleFlapAction(action models.GameAction) {
     if currentGameState.Started {
-        if _, exists := currentGameState.Players[action.UserID]; exists {
-            broadcastMessage("playerAction", map[string]interface{}{"action": "flap", "userID": action.UserID})
-            handleGameAction(action, currentGameState.GameID)
-            log.Printf("Player %s flapped", action.UserID)
+        if _, exists := currentGameState.Players[action.UserID]; exists && currentGameState.Players[action.UserID].Alive{
+                broadcastMessage("playerAction", map[string]interface{}{"action": "flap", "userID": action.UserID})
+                handleGameAction(action, currentGameState.GameID)
+                log.Printf("Player %s flapped", action.UserID)
         } else {
             broadcastMessage("playerNotFound", map[string]string{"userID": action.UserID})
         }
@@ -120,7 +115,7 @@ func handleFlapAction(action models.GameAction) {
 
 func handleScoreAction(action models.GameAction) {
     if currentGameState.Started {
-        if _, exists := currentGameState.Players[action.UserID]; exists {
+        if _, exists := currentGameState.Players[action.UserID]; exists && currentGameState.Players[action.UserID].Alive{
             playerScored(action.UserID)
             broadcastMessage("playerScored", map[string]interface{}{"userID": action.UserID})
             handleGameAction(action, currentGameState.GameID)
@@ -135,9 +130,9 @@ func handleScoreAction(action models.GameAction) {
 
 func handleDeadAction(action models.GameAction) {
     if currentGameState.Started {
-        if player, exists := currentGameState.Players[action.UserID]; exists {
+        if player, exists := currentGameState.Players[action.UserID]; exists && player.Alive{
             player.Alive = false
-            broadcastMessage("playerDeath", map[string]string{"userID": action.UserID})
+            broadcastMessage("playerDead", map[string]string{"userID": action.UserID})
             handleGameAction(action, currentGameState.GameID)
             log.Printf("Player %s is dead", action.UserID)
 
